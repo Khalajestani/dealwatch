@@ -136,6 +136,7 @@ def report(run_id: int | None = typer.Argument(None, help="Run id (default: late
 def tracker():
     """Per-item price tracker summary (best price per check, change, trend, lowest ever, best shop)."""
     from .services.insights import all_item_insights
+    from .services.report import money
 
     _, session_factory = _bootstrap()
     with session_factory() as session:
@@ -146,9 +147,9 @@ def tracker():
             typer.echo(f"{i.item.display_name[:38]:<38} {0:>6}  (no price points yet)")
             continue
         prev = f"{i.change_vs_prev_pct:+.0f}%" if i.change_vs_prev_pct is not None else "-"
-        avg30 = f"{i.avg_30d:.2f}" if i.avg_30d is not None else "-"
-        last = f"{i.last.best:.2f}{i.unit_label}"
-        typer.echo(f"{i.item.display_name[:38]:<38} {i.n_points:>6} {last:>14} {prev:>7} {avg30:>9} {i.low:>9.2f} {i.trend:<8} {i.best_domain or '-'}")
+        avg30 = money(i.avg_30d) if i.avg_30d is not None else "-"
+        last = f"{money(i.last.best)}{i.unit_label}"
+        typer.echo(f"{i.item.display_name[:38]:<38} {i.n_points:>6} {last:>14} {prev:>7} {avg30:>9} {money(i.low):>9} {i.trend:<8} {i.best_domain or '-'}")
 
 
 @app.command()

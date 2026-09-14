@@ -22,6 +22,8 @@ def money(value: float | None, currency: str = "EUR") -> str:
     if value is None:
         return "-"
     symbol = {"EUR": "€", "USD": "$", "GBP": "£"}.get(currency.upper(), currency + " ")
+    if 0 < abs(value) < 0.1:  # per-ml / per-gram prices need more precision than cents
+        return f"{symbol}{value:.4f}"
     return f"{symbol}{value:,.2f}"
 
 

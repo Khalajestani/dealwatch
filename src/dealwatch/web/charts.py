@@ -39,7 +39,7 @@ def nice_ticks(lo: float, hi: float, count: int = 4) -> list[float]:
 
 
 def _fmt_money(value: float) -> str:
-    return f"€{value:,.2f}"
+    return f"€{value:.4f}" if 0 < abs(value) < 0.1 else f"€{value:,.2f}"
 
 
 def _fmt_date(value: datetime) -> str:
