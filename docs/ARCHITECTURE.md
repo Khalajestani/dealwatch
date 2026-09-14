@@ -109,3 +109,18 @@ logged in `log_json`. A second run cannot start while one is active.
 Local single-user tool, no authentication - bind to 127.0.0.1 (default) and do not expose it. Model/web supplied
 text is escaped before it reaches HTML (Jinja autoescape; `report.safe` neutralises tags and link syntax in markdown;
 non-http URLs are not linked). Secrets only come from `.env` / environment.
+
+## Adding items (`web/app.py`, `services/extract.py`, `services/similar.py`)
+
+`GET /items/new` shows three tabs. Each posts to `POST /items/review`:
+
+- **manual**: form fields -> draft dict.
+- **link**: `Extractor.from_url(url)` -> one Messages request with the `web_fetch` tool (`allowed_domains` = that
+  domain, `max_uses` 2, content capped) and the `EXTRACT_SCHEMA` structured output -> `ExtractedItem`.
+- **photo**: the upload is EXIF-rotated, downscaled to 1568px and re-encoded as JPEG (`prepare_image`), stored as
+  `data/uploads/<uuid>.jpg`, and sent as a base64 image block with the same schema.
+
+The review page renders the draft in the shared `item_fields` macro plus the extraction summary, confidence, price seen,
+and `find_similar` matches (Jaccard/containment over normalised tokens with Dutch->English synonyms, character ratio
+for typos; >= 0.8 = likely duplicate). `POST /items` creates the item (`reference_url`, `image_path`). The
+`FakeExtractor` (fake mode / tests) guesses fields from the URL slug or filename.

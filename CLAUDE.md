@@ -65,3 +65,9 @@ observation, and reports real deals versus each item's own price history. Read `
 - A new source adapter must only return offers from its own domain (others are dropped) and runs only when that
   retailer is `enabled` on the Retailers page. Keep adapters free of network calls at import time; test with fixtures.
 - Charts: keep to the two series colours (`--viz-s1/--viz-s2`) - adding a third series needs a re-validated palette.
+- UI conventions: server-rendered pages, no build step. Icons are inline SVG symbols in `_icons.html` used via
+  `{{ icon('name', 'sm') }}`; category icon/colour come from `models.CATEGORY_ICON` + `.cat-<key>` CSS; badges use
+  `.badge.<state>`. Keep colour restrained: accent for actions, semantic colours only for states. `static/app.js` holds
+  the few progressive enhancements (everything works without JS except live similar-items suggestions).
+- Uploaded photos live in `data/uploads/<uuid>.jpg` (downscaled JPEG); `image_path` is validated against that pattern.
+- Extraction requests share `llm.complete_with_continuations` and `describe_api_error` with the search client.

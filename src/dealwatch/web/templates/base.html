@@ -7,28 +7,33 @@
 <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}">
 </head>
 <body>
+{% include "_icons.html" %}
 <header class="topbar">
-  <a class="brand" href="/">🛒 Dealwatch</a>
-  <nav>
-    <a href="/" class="{{ 'active' if nav == 'dashboard' else '' }}">Dashboard</a>
-    <a href="/items" class="{{ 'active' if nav == 'items' else '' }}">Items</a>
-    <a href="/retailers" class="{{ 'active' if nav == 'retailers' else '' }}">Retailers</a>
-    <a href="/runs" class="{{ 'active' if nav == 'runs' else '' }}">Runs</a>
-    <a href="/tracker" class="{{ 'active' if nav == 'tracker' else '' }}">Tracker</a>
-    <a href="/settings" class="{{ 'active' if nav == 'settings' else '' }}">Settings</a>
-  </nav>
-  <div class="status">
-    {% if run_active %}<span class="badge running">run in progress</span>{% endif %}
-    {% if fake %}<span class="badge warn" title="DEALWATCH_FAKE_LLM=1: no credits are spent, prices are made up">fake LLM</span>
-    {% elif not api_ready %}<span class="badge danger" title="Put ANTHROPIC_API_KEY in .env and restart">no API key</span>{% endif %}
+  <div class="brandbar">
+    <a class="brand" href="/"><span class="brand-mark">{{ icon('cart') }}</span><span>Dealwatch<div class="brand-sub">better prices, planned ahead</div></span></a>
+    <div class="status">
+      {% if run_active %}<span class="badge running">{{ icon('refresh', 'sm') }} run in progress</span>{% endif %}
+      {% if fake %}<span class="badge warn" title="DEALWATCH_FAKE_LLM=1: no credits are spent, prices are made up">{{ icon('sparkles', 'sm') }} fake LLM</span>
+      {% elif not api_ready %}<span class="badge danger" title="Put ANTHROPIC_API_KEY in .env and restart">{{ icon('alert', 'sm') }} no API key</span>{% endif %}
+      <a class="btn primary small" href="/items/new">{{ icon('plus', 'sm') }} Add item</a>
+    </div>
   </div>
+  <nav class="pills">
+    <a href="/" class="{{ 'active' if nav == 'dashboard' else '' }}">{{ icon('home', 'sm') }} Dashboard</a>
+    <a href="/items" class="{{ 'active' if nav == 'items' else '' }}">{{ icon('list', 'sm') }} Items</a>
+    <a href="/retailers" class="{{ 'active' if nav == 'retailers' else '' }}">{{ icon('store', 'sm') }} Retailers</a>
+    <a href="/runs" class="{{ 'active' if nav == 'runs' else '' }}">{{ icon('play', 'sm') }} Runs</a>
+    <a href="/tracker" class="{{ 'active' if nav == 'tracker' else '' }}">{{ icon('chart', 'sm') }} Tracker</a>
+    <a href="/settings" class="{{ 'active' if nav == 'settings' else '' }}">{{ icon('sliders', 'sm') }} Settings</a>
+  </nav>
 </header>
 <main>
-  {% if msg %}<div class="flash ok">{{ msg }}</div>{% endif %}
-  {% if err %}<div class="flash err">{{ err }}</div>{% endif %}
+  {% if msg %}<div class="flash ok">{{ icon('check', 'sm') }} {{ msg }}</div>{% endif %}
+  {% if err %}<div class="flash err">{{ icon('alert', 'sm') }} {{ err }}</div>{% endif %}
   {% block content %}{% endblock %}
 </main>
-<footer>Dealwatch · runs locally · <a href="/api/health">health</a> · export: <a href="/export/price_points.csv">price points</a>, <a href="/export/observations.csv">observations</a>, <a href="/export/items.csv">items</a>, <a href="/export/runs.csv">runs</a></footer>
+<footer>Dealwatch runs locally · <a href="/api/health">health</a> · export <a href="/export/price_points.csv">price points</a>, <a href="/export/observations.csv">observations</a>, <a href="/export/items.csv">items</a>, <a href="/export/runs.csv">runs</a></footer>
 <script src="{{ url_for('static', path='tracker.js') }}" defer></script>
+<script src="{{ url_for('static', path='app.js') }}" defer></script>
 </body>
 </html>

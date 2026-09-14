@@ -1,38 +1,29 @@
 {% extends "base.html" %}
+{% from "_macros.html" import cat, priority_badge, status_chip, item_fields with context %}
 {% block title %}{{ item.display_name }} · Dealwatch{% endblock %}
 {% block content %}
-<p><a href="/items">← Items</a></p>
-<h1>{{ item.display_name }}
-  {% if not item.active %}<span class="badge">paused</span>{% elif item.snooze_until %}<span class="badge warn">snoozed until {{ item.snooze_until|localtime(tz) }}</span>{% elif due %}<span class="badge ok">due</span>{% endif %}
-</h1>
+<p><a href="/items">{{ icon('arrow-left', 'sm') }} Items</a></p>
+<div class="page-head">
+  <h1>{% if item.image_path %}<img class="thumb" src="/uploads/{{ item.image_path }}" alt="">{% endif %}{{ item.display_name }} {{ cat(item.category) }} {{ priority_badge(item.priority) }} {{ status_chip(item, due) }}</h1>
+  <div class="actions">
+    <form method="post" action="/items/{{ item.id }}/action"><input type="hidden" name="action" value="bought"><button type="submit" class="ok">{{ icon('check', 'sm') }} Bought it <span class="faint">(snooze {{ settings.bought_snooze_days }}d)</span></button></form>
+    {% if item.snooze_until %}<form method="post" action="/items/{{ item.id }}/action"><input type="hidden" name="action" value="unsnooze"><button type="submit">{{ icon('clock', 'sm') }} Remove snooze</button></form>{% endif %}
+    <form method="post" action="/items/{{ item.id }}/action"><input type="hidden" name="action" value="check_next"><button type="submit">{{ icon('refresh', 'sm') }} Check next run</button></form>
+    <form method="post" action="/items/{{ item.id }}/action"><input type="hidden" name="action" value="toggle"><button type="submit">{{ icon('pause' if item.active else 'play', 'sm') }} {{ 'Pause' if item.active else 'Re-activate' }}</button></form>
+    <form method="post" action="/items/{{ item.id }}/action" onsubmit="return confirm('Delete this item and its price history?')"><input type="hidden" name="action" value="delete"><button class="danger" type="submit">{{ icon('trash', 'sm') }} Delete</button></form>
+  </div>
+</div>
+<p class="muted small">Last checked: {{ item.last_checked_at|localtime(tz) if item.last_checked_at else 'never' }}{% if item.last_bought_at %} · last bought: {{ item.last_bought_at|localtime(tz) }}{% endif %}{% if item.snooze_until %} · snoozed until {{ item.snooze_until|localtime(tz) }}{% endif %}{% if item.reference_url %} · <a href="{{ item.reference_url }}" target="_blank" rel="noopener">{{ icon('external', 'sm') }} product page</a>{% endif %}</p>
 
-<div class="card">
-  <form method="post" action="/items/{{ item.id }}" class="grid">
-    <div><label>Name *</label><input type="text" name="name" value="{{ item.name }}" required></div>
-    <div><label>Brand</label><input type="text" name="brand" value="{{ item.brand or '' }}"></div>
-    <div><label>Category</label><select name="category">{% for key, label in categories %}<option value="{{ key }}" {% if key == item.category %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
-    <div><label>Priority</label><select name="priority">{% for key, label in priorities %}<option value="{{ key }}" {% if key == item.priority %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
-    <div class="wide"><label>Search hints</label><input type="text" name="search_hints" value="{{ item.search_hints or '' }}"></div>
-    <div><label>Unit</label><select name="unit"><option value="">(none)</option>{% for u in units %}<option value="{{ u }}" {% if u == item.unit %}selected{% endif %}>{{ u }}</option>{% endfor %}</select></div>
-    <div><label>Target price</label><input type="text" name="target_price" value="{{ item.target_price if item.target_price is not none else '' }}"></div>
-    <div><label>Target price per unit</label><input type="text" name="target_unit_price" value="{{ item.target_unit_price if item.target_unit_price is not none else '' }}"></div>
-    <div><label>Check interval (days)</label><input type="text" name="check_interval_days" value="{{ item.check_interval_days or '' }}"><div class="help">blank = {{ settings.interval_for(item.priority) }} days for priority '{{ item.priority }}'</div></div>
-    <div><label class="inline"><input type="checkbox" name="bulk_ok" value="1" {% if item.bulk_ok %}checked{% endif %}> household bulk packs are fine</label></div>
-    <div class="wide"><label>Notes</label><input type="text" name="notes" value="{{ item.notes or '' }}"></div>
-    <div><button class="primary" type="submit">Save</button></div>
+<details class="card"><summary>{{ icon('edit', 'sm') }} Edit details</summary>
+  <form method="post" action="/items/{{ item.id }}" class="grid" style="margin-top:12px">
+    {{ item_fields({'id': item.id, 'name': item.name, 'brand': item.brand, 'category': item.category, 'priority': item.priority, 'search_hints': item.search_hints, 'unit': item.unit, 'target_price': item.target_price, 'target_unit_price': item.target_unit_price, 'check_interval_days': item.check_interval_days, 'bulk_ok': item.bulk_ok, 'reference_url': item.reference_url, 'notes': item.notes}, settings) }}
+    <div class="help wide">Blank interval = {{ settings.interval_for(item.priority) }} days for priority '{{ item.priority }}'.</div>
+    <div class="wide actions"><button class="primary" type="submit">{{ icon('check', 'sm') }} Save</button>{% if item.image_path %}<button type="submit" class="ghost" formaction="/items/{{ item.id }}/action" formmethod="post" name="action" value="remove_photo">{{ icon('trash', 'sm') }} Remove photo</button>{% endif %}</div>
   </form>
-</div>
+</details>
 
-<div class="card actions">
-  <form method="post" action="/items/{{ item.id }}/action"><input type="hidden" name="action" value="bought"><button type="submit">✅ Bought it (snooze {{ settings.bought_snooze_days }} days)</button></form>
-  {% if item.snooze_until %}<form method="post" action="/items/{{ item.id }}/action"><input type="hidden" name="action" value="unsnooze"><button type="submit">Remove snooze</button></form>{% endif %}
-  <form method="post" action="/items/{{ item.id }}/action"><input type="hidden" name="action" value="check_next"><button type="submit">Check in next run</button></form>
-  <form method="post" action="/items/{{ item.id }}/action"><input type="hidden" name="action" value="toggle"><button type="submit">{{ 'Pause checks' if item.active else 'Re-activate' }}</button></form>
-  <form method="post" action="/items/{{ item.id }}/action" onsubmit="return confirm('Delete this item and its price history?')"><input type="hidden" name="action" value="delete"><button class="danger" type="submit">Delete</button></form>
-  <span class="muted small">last checked: {{ item.last_checked_at|localtime(tz) if item.last_checked_at else 'never' }}{% if item.last_bought_at %} · last bought: {{ item.last_bought_at|localtime(tz) }}{% endif %}</span>
-</div>
-
-<h2>Price tracker</h2>
+<h2>{{ icon('chart', 'sm') }} Price tracker</h2>
 {% if insight.n_points %}
 <div class="cards">
   <div class="card"><div class="stat num">{{ insight.last.best|money(settings.currency) }}<span class="muted small">{{ insight.unit_label }}</span></div><div class="stat-label">best price, last check ({{ insight.last.at|localtime(tz) }}, {{ insight.last.domain }})</div></div>
@@ -73,7 +64,7 @@
 <p class="muted">No price points yet - the tracker starts with the first run that finds this item.</p>
 {% endif %}
 
-<h2>All offers seen</h2>
+<h2>{{ icon('tag', 'sm') }} All offers seen</h2>
 {% if history %}
 <table>
   <tr><th>Seen</th><th>Shop</th><th>Price</th><th>Per unit</th><th>Promo</th><th>vs baseline</th><th>Conf.</th><th>Listing</th></tr>
@@ -84,7 +75,7 @@
     <td>{{ obs.price|money(obs.currency) }}{% if obs.list_price %} <span class="muted small">reg. {{ obs.list_price|money(obs.currency) }}</span>{% endif %}</td>
     <td>{% if obs.unit_price is not none %}{{ obs.unit_price|money(obs.currency) }}/{{ obs.unit }} <span class="muted small">({{ obs.pack_quantity|round(2) }} {{ obs.unit }})</span>{% else %}-{% endif %}</td>
     <td class="small">{% if obs.promo_type != 'none' %}{{ obs.promo_type }}{% if obs.promo_text %}: {{ obs.promo_text }}{% endif %}{% if obs.valid_until %} (until {{ obs.valid_until }}){% endif %}{% endif %}</td>
-    <td class="small">{{ obs.discount_pct|pct }}{% if obs.is_deal %} <span class="badge deal">deal</span>{% endif %}</td>
+    <td class="small">{{ obs.discount_pct|pct }}{% if obs.is_deal %} <span class="badge deal">{{ icon('flame', 'sm') }} deal</span>{% endif %}</td>
     <td class="small">{{ (obs.confidence * 100)|round|int }}%</td>
     <td class="small"><a href="{{ obs.url }}" target="_blank" rel="noopener">{{ obs.title[:70] }}</a>{% if obs.evidence %}<div class="muted">{{ obs.evidence[:160] }}</div>{% endif %}</td>
   </tr>
@@ -95,7 +86,7 @@
 {% endif %}
 
 {% if checks %}
-<h2>Recent checks</h2>
+<h2>{{ icon('clock', 'sm') }} Recent checks</h2>
 <table>
   <tr><th>Run</th><th>Status</th><th>Note</th></tr>
   {% for c in checks %}<tr><td><a href="/runs/{{ c.run_id }}">#{{ c.run_id }}</a></td><td><span class="badge {{ 'ok' if c.status == 'found' else ('danger' if c.status == 'error' else '') }}">{{ c.status }}</span></td><td class="small">{{ c.note or '' }}</td></tr>{% endfor %}

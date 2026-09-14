@@ -1,0 +1,31 @@
+{% macro cat(key) -%}
+<span class="cat cat-{{ key }}"><i>{{ icon(category_icon.get(key, 'tag'), 'sm') }}</i>{{ category_short.get(key, key) }}</span>
+{%- endmacro %}
+
+{% macro priority_badge(key) -%}
+<span class="badge {{ key }}">{% if key == 'need' %}{{ icon('zap', 'sm') }}{% elif key == 'wishlist' %}{{ icon('heart', 'sm') }}{% else %}{{ icon('bag', 'sm') }}{% endif %} {{ {'need': 'need', 'stock_up': 'stock up', 'wishlist': 'wishlist'}.get(key, key) }}</span>
+{%- endmacro %}
+
+{% macro status_chip(item, due) -%}
+{% if not item.active %}<span class="badge">{{ icon('pause', 'sm') }} paused</span>
+{% elif item.snooze_until %}<span class="badge snoozed">{{ icon('clock', 'sm') }} snoozed</span>
+{% elif due %}<span class="badge due">{{ icon('check', 'sm') }} due</span>
+{% else %}<span class="badge">{{ icon('clock', 'sm') }} waiting</span>{% endif %}
+{%- endmacro %}
+
+{% macro item_fields(v, settings) -%}
+{# shared editable fields for add-review and edit forms; `v` is a dict-like with the current values #}
+<div><label>Name *</label><input type="text" name="name" value="{{ v.get('name') or '' }}" required placeholder="Kitchen towels" data-similar="similar-box" data-exclude="{{ v.get('id') or '' }}"></div>
+<div><label>Brand</label><input type="text" name="brand" value="{{ v.get('brand') or '' }}" placeholder="Page" data-similar-brand></div>
+<div class="wide"><div id="similar-box" class="similar"></div></div>
+<div><label>Category</label><select name="category">{% for key, label in categories %}<option value="{{ key }}" {% if key == (v.get('category') or 'household') %}selected{% endif %}>{{ category_short[key] }}</option>{% endfor %}</select></div>
+<div><label>Priority</label><select name="priority">{% for key, label in priorities %}<option value="{{ key }}" {% if key == (v.get('priority') or 'stock_up') %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+<div class="wide"><label>Search hints <span class="faint">(pack size, variant, model - Dutch works best)</span></label><input type="text" name="search_hints" value="{{ v.get('search_hints') or '' }}" placeholder="keukenpapier XXL, 8 rollen"></div>
+<div><label>Unit for price comparison</label><select name="unit"><option value="">(none)</option>{% for u in units %}<option value="{{ u }}" {% if u == v.get('unit') %}selected{% endif %}>{{ u }}</option>{% endfor %}</select><div class="help">roll, tablet, wash, ml … lets bulk packs compare fairly</div></div>
+<div><label>Target price (per pack)</label><input type="text" name="target_price" value="{{ v.get('target_price') if v.get('target_price') is not none else '' }}" placeholder="4.50"></div>
+<div><label>Target price per unit</label><input type="text" name="target_unit_price" value="{{ v.get('target_unit_price') if v.get('target_unit_price') is not none else '' }}" placeholder="0.60"></div>
+<div><label>Check interval (days)</label><input type="text" name="check_interval_days" value="{{ v.get('check_interval_days') or '' }}" placeholder="by priority"></div>
+<div><label class="inline"><input type="checkbox" name="bulk_ok" value="1" {% if v.get('bulk_ok', True) %}checked{% endif %}> household bulk packs are fine</label></div>
+<div class="wide"><label>Product link <span class="faint">(optional, used as a search hint)</span></label><input type="url" name="reference_url" value="{{ v.get('reference_url') or '' }}" placeholder="https://www.bol.com/…"></div>
+<div class="wide"><label>Notes</label><input type="text" name="notes" value="{{ v.get('notes') or '' }}"></div>
+{%- endmacro %}

@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% from "_macros.html" import item_fields with context %}
+{% block title %}Add item · Dealwatch{% endblock %}
+{% block content %}
+<p><a href="/items">{{ icon('arrow-left', 'sm') }} Items</a></p>
+<h1>{{ icon('plus') }} Add an item</h1>
+<p class="muted">Only the name is required. Whatever you add or extract lands on a review card first, so nothing is saved until you confirm.</p>
+
+<div class="card">
+  <div class="tabs">
+    <a href="?mode=manual" data-tab="manual" class="{{ 'active' if mode == 'manual' else '' }}">{{ icon('edit', 'sm') }} Type it</a>
+    <a href="?mode=link" data-tab="link" class="{{ 'active' if mode == 'link' else '' }}">{{ icon('link', 'sm') }} From a link</a>
+    <a href="?mode=photo" data-tab="photo" class="{{ 'active' if mode == 'photo' else '' }}">{{ icon('camera', 'sm') }} From a photo</a>
+  </div>
+
+  <div class="panel {{ 'active' if mode == 'manual' else '' }}" data-panel="manual">
+    <form method="post" action="/items/review" class="grid">
+      <input type="hidden" name="mode" value="manual">
+      {{ item_fields(prefill, settings) }}
+      <div class="wide actions"><button class="primary" type="submit">{{ icon('check', 'sm') }} Review</button><span class="help">Similar items you already have show up under the name as you type.</span></div>
+    </form>
+  </div>
+
+  <div class="panel {{ 'active' if mode == 'link' else '' }}" data-panel="link">
+    {% if not extract_ready %}<div class="notice">{{ icon('alert') }}<div>Link extraction needs Anthropic credentials. Put <code>ANTHROPIC_API_KEY</code> in <code>.env</code> and restart, or set <code>DEALWATCH_FAKE_LLM=1</code> to try the flow with guessed data.</div></div>{% endif %}
+    <form method="post" action="/items/review" class="grid">
+      <input type="hidden" name="mode" value="link">
+      <div class="wide"><label>Product page URL</label><input type="url" name="url" value="{{ prefill.get('url') or '' }}" required placeholder="https://www.bol.com/nl/nl/p/…"></div>
+      <div class="wide actions"><button class="primary" type="submit" {% if not extract_ready %}disabled{% endif %}>{{ icon('sparkles', 'sm') }} Read the page &amp; review</button><span class="help">One small API call: Claude reads the page and fills in name, brand, category, pack size and the price it saw.</span></div>
+    </form>
+  </div>
+
+  <div class="panel {{ 'active' if mode == 'photo' else '' }}" data-panel="photo">
+    {% if not extract_ready %}<div class="notice">{{ icon('alert') }}<div>Photo extraction needs Anthropic credentials (or <code>DEALWATCH_FAKE_LLM=1</code> for a guessed result).</div></div>{% endif %}
+    <form method="post" action="/items/review" enctype="multipart/form-data" class="grid">
+      <input type="hidden" name="mode" value="photo">
+      <div class="wide"><label>Photo of the product (label and brand visible)</label><input type="file" name="photo" accept="image/*" capture="environment" required data-preview="photo-preview"><img id="photo-preview" class="preview" alt=""></div>
+      <div class="wide actions"><button class="primary" type="submit" {% if not extract_ready %}disabled{% endif %}>{{ icon('sparkles', 'sm') }} Analyse the photo &amp; review</button><span class="help">JPEG, PNG or WebP; large photos are downscaled before upload to the API.</span></div>
+    </form>
+  </div>
+</div>
+{% endblock %}

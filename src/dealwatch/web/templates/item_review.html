@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% from "_macros.html" import item_fields, cat with context %}
+{% block title %}Review item · Dealwatch{% endblock %}
+{% block content %}
+<p><a href="/items/new?mode={{ mode }}">{{ icon('arrow-left', 'sm') }} Back</a></p>
+<h1>{{ icon('check') }} Review before adding</h1>
+
+<div class="card">
+  <div class="review-source">
+    {% if image_path %}<img class="thumb-lg" src="/uploads/{{ image_path }}" alt="uploaded photo">{% endif %}
+    <div>
+      {% if mode == 'link' %}<p><strong>{{ icon('link', 'sm') }} Extracted from</strong> <a href="{{ draft.reference_url }}" target="_blank" rel="noopener">{{ draft.reference_url|truncate(80) }}</a></p>
+      {% elif mode == 'photo' %}<p><strong>{{ icon('camera', 'sm') }} Extracted from your photo</strong></p>
+      {% else %}<p><strong>{{ icon('edit', 'sm') }} Entered by hand</strong></p>{% endif %}
+      {% if extracted %}
+      <dl class="kv">
+        {% if extracted.product_title %}<dt>Seen as</dt><dd>{{ extracted.product_title }}</dd>{% endif %}
+        {% if extracted.price %}<dt>Price seen</dt><dd>{{ extracted.price|money(extracted.currency or settings.currency) }}{% if extracted.retailer_domain %} at {{ extracted.retailer_domain }}{% endif %}</dd>{% endif %}
+        {% if extracted.pack_quantity %}<dt>Pack</dt><dd>{{ extracted.pack_quantity|round(2) }} {{ extracted.unit or '' }}</dd>{% endif %}
+        <dt>Confidence</dt><dd><span class="badge {{ 'ok' if extracted.confidence >= 0.7 else ('warn' if extracted.confidence >= 0.4 else 'danger') }}">{{ (extracted.confidence * 100)|round|int }}%</span> <span class="muted small">{{ extracted.summary }}</span></dd>
+      </dl>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+{% if similar %}
+<div class="notice {{ 'info' if not similar[0].likely_duplicate else '' }}">
+  {{ icon('alert' if similar[0].likely_duplicate else 'info') }}
+  <div>
+    <strong>{% if similar[0].likely_duplicate %}You probably already track this item.{% else %}Similar items you already track:{% endif %}</strong>
+    <div class="similar" style="margin-top:6px">
+      {% for m in similar %}<a href="/items/{{ m.item.id }}" class="{{ 'strong' if m.likely_duplicate else '' }}">{{ cat(m.item.category) }} {{ m.item.display_name }}<span class="score">{{ (m.score * 100)|round|int }}% match · open</span></a>{% endfor %}
+    </div>
+    {% if similar[0].likely_duplicate %}<div class="help">Open the existing item to edit it instead, or add this one anyway if it is really a different product.</div>{% endif %}
+  </div>
+</div>
+{% endif %}
+
+<div class="card">
+  <form method="post" action="/items" class="grid">
+    <input type="hidden" name="image_path" value="{{ image_path or '' }}">
+    {{ item_fields(draft, settings) }}
+    <div class="wide actions">
+      <button class="primary" type="submit">{{ icon('plus', 'sm') }} Add item{% if similar and similar[0].likely_duplicate %} anyway{% endif %}</button>
+      <a class="btn" href="/items/new?mode={{ mode }}">{{ icon('x', 'sm') }} Cancel</a>
+      {% if image_path %}<button type="submit" class="ghost" formaction="/items/review/discard" formmethod="post">{{ icon('trash', 'sm') }} Discard photo</button>{% endif %}
+    </div>
+  </form>
+</div>
+{% endblock %}

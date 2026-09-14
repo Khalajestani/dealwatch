@@ -50,3 +50,14 @@ sources are free, so denser tracking costs nothing; the LLM stays on its priorit
 **2026-09-14 · Charts are server-rendered SVG with a tiny hover script, no chart library.** Keeps the app offline-
 capable and dependency-free; the design follows the data-viz method (validated two-colour pair, sparse labels,
 legend, table fallback).
+
+**2026-09-14 · Review card before every add; extraction is a helper, not an authority.** Link/photo extraction
+pre-fills the form but the user confirms; the model's summary and confidence are shown so a bad read is obvious. Only
+the name is mandatory anywhere - the app must stay usable with sparse data.
+
+**2026-09-14 · Duplicate detection is lexical, not an LLM call.** Token overlap with a small Dutch->English synonym
+table plus a typo ratio is instant, free and predictable; it runs live while typing and again on the review card.
+
+**2026-09-14 · UI: server-rendered, inline SVG icons, restrained colour (TOOL-E inspired).** White cards on a light
+page, one indigo accent for actions, semantic colours only for states and categories; no CSS/JS build step so the
+app keeps working offline and stays easy to modify.

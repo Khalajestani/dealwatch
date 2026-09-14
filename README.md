@@ -69,10 +69,24 @@ estimate, then *Run now*. The report appears under *Runs* in a minute or two.
 
 ## Using it
 
-**Items** - name, brand, category, *search hints* (pack size, variant, model number - Dutch works best), a *unit* for
-per-unit comparison (roll, tablet, wash, ml...), whether household multi-packs are acceptable, a priority, optional
-target prices (per pack and/or per unit) and an optional custom check interval. Actions: *Bought it* (snoozes the item
-for 30 days), *Check in next run*, pause, delete. Each item page shows its full price history.
+**Adding items** - three ways, all ending on a review card you confirm before anything is saved:
+
+- *Type it*: only the name is required. While you type, items you already track that look similar appear under the
+  field (Dutch/English synonyms and typos are recognised), so "Page keukenrol" finds "Page Kitchen towels".
+- *From a link*: paste a product page URL; Claude reads the page (one small API call) and fills in name, brand,
+  category, pack size/unit, search hints, and shows the price it saw. The URL is kept as a search hint.
+- *From a photo*: snap the product with label and brand visible; the photo is downscaled, sent to Claude, and the
+  same fields are filled in. The photo is kept next to the item.
+
+The review card shows what was extracted (with a confidence badge and the model's one-line summary), warns when a
+likely duplicate exists (with a link to open it instead), and lets you correct every field before *Add item*.
+
+**Items** - the list has filters: free text (name, brand, hints, notes), category, priority and status (due, waiting,
+snoozed, paused, has a deal, no price yet). Fields per item: name, brand, category, *search hints* (pack size,
+variant, model number - Dutch works best), a *unit* for per-unit comparison (roll, tablet, wash, ml...), whether
+household multi-packs are acceptable, a priority, optional target prices (per pack and/or per unit), an optional
+custom check interval, an optional product link. Actions: *Bought it* (snoozes the item for 30 days), *Check in next
+run*, pause, delete. Each item page shows its price tracker and full history.
 
 **Retailers** - the configuration page for shops. Each has a domain and a status:
 `enabled` (searched), `disabled` (temporarily off), `blocked` (never used; offers from it are discarded even if they
@@ -164,14 +178,17 @@ src/dealwatch/
     llm.py          Anthropic client (web search + structured output, pause_turn, usage) and the fake client
     pricing.py      unit prices, baselines (from price points), deal assessment, price-point aggregation
     insights.py     per-item statistics, retailer breakdown, movers, overview (Tracker page / report)
+    similar.py      near-duplicate detection for item names (synonyms, typos)
+    extract.py      item extraction from a product link (web fetch) or a photo (vision), + fake extractor
     sources/        direct deal source interface (+ fake) for supermarket folders / retailer APIs
     runner.py       run orchestration (parallel batches, persistence, status)
     report.py       markdown/HTML report
     notify.py       e-mail / Telegram
     scheduler.py    APScheduler cron job
-  web/              FastAPI app, Jinja templates, CSS, charts.py (inline SVG) + static/tracker.js (hover layer)
+  web/              FastAPI app, Jinja templates (+ _icons.html SVG set, _macros.html), style.css (design tokens),
+                    charts.py (inline SVG), static/app.js (filters, tabs, live similar-items, photo preview), static/tracker.js
 tests/              pytest suite (fake/stubbed LLM only)
 docs/               architecture, decisions, roadmap, operations
 deploy/             launchd example
-data/               (git-ignored) SQLite DB + report files
+data/               (git-ignored) SQLite DB, report files, uploaded item photos
 ```

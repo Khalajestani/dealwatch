@@ -82,16 +82,80 @@ class ModelProfile:
     supports_effort: bool
     supports_adaptive_thinking: bool
     supports_response_inclusion: bool
+    fetch_tool_type: str = "web_fetch_20260209"
 
 
 _LEGACY_MARKERS = ("haiku-4-5", "sonnet-4-5", "opus-4-5", "opus-4-1", "haiku-3", "sonnet-3", "opus-4-0", "sonnet-4-0")
 
 
 def model_profile(model: str) -> ModelProfile:
-    """Older models need the basic search tool and reject `effort` / adaptive thinking."""
+    """Older models need the basic search/fetch tools and reject `effort` / adaptive thinking."""
     if any(marker in model for marker in _LEGACY_MARKERS):
-        return ModelProfile("web_search_20250305", False, False, False)
+        return ModelProfile("web_search_20250305", False, False, False, "web_fetch_20250910")
     return ModelProfile("web_search_20260318", True, True, True)
+
+
+def create_message(client: anthropic.Anthropic, request: dict[str, Any], settings: Settings) -> Any:
+    """One Messages API call, via the beta endpoint when server-side fallbacks are enabled."""
+    if settings.llm_fallbacks:
+        return client.beta.messages.create(**request, betas=[FALLBACK_BETA], fallbacks="default")
+    return client.messages.create(**request)
+
+
+@dataclass
+class Completed:
+    """Outcome of a request that may have paused for server-side tools and been continued."""
+
+    content: list[Any] = field(default_factory=list)
+    usage: UsageTotals = field(default_factory=UsageTotals)
+    stop_reason: str | None = None
+    served_by: str | None = None
+    error: str | None = None
+
+    @property
+    def text(self) -> str:
+        return final_text(self.content)
+
+
+def complete_with_continuations(client: anthropic.Anthropic, request: dict[str, Any], settings: Settings) -> Completed:
+    """Run a request, continuing `pause_turn` responses (server-side tool loops) up to MAX_CONTINUATIONS times."""
+    done = Completed()
+    user_message = request["messages"][0]
+    response: Any = None
+    for _ in range(MAX_CONTINUATIONS + 1):
+        response = create_message(client, request, settings)
+        done.usage.add_usage(response.usage)
+        done.content.extend(response.content)
+        done.stop_reason = response.stop_reason
+        if response.stop_reason != "pause_turn":
+            break
+        # Server-side loop paused: send the assistant turn back unchanged and let it continue.
+        request["messages"] = [user_message, {"role": "assistant", "content": list(done.content)}]
+    else:
+        done.error = f"still paused after {MAX_CONTINUATIONS} continuations"
+        return done
+    done.served_by = getattr(response, "model", None)
+    if response.stop_reason == "refusal":
+        details = getattr(response, "stop_details", None)
+        category = getattr(details, "category", None) if details else None
+        done.error = "model declined the request" + (f" ({category})" if category else "")
+    elif response.stop_reason == "max_tokens":
+        done.error = "response cut off by max_tokens"
+    return done
+
+
+def describe_api_error(exc: Exception) -> str:
+    if isinstance(exc, anthropic.AuthenticationError):
+        return "authentication failed - check ANTHROPIC_API_KEY"
+    if isinstance(exc, anthropic.RateLimitError):
+        return f"rate limited: {exc.message}"
+    if isinstance(exc, anthropic.BadRequestError):
+        return f"bad request: {exc.message}"
+    if isinstance(exc, anthropic.APIStatusError):
+        return f"API error {exc.status_code}: {exc.message}"
+    if isinstance(exc, anthropic.APIConnectionError):
+        return f"connection error: {exc}"
+    return f"could not parse model output: {exc}"
 
 
 def locale_payload(settings: Settings) -> dict[str, str]:
@@ -180,55 +244,22 @@ class AnthropicSearchClient:
         # Credentials: ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN / `ant auth login` profile.
         self._client = client or anthropic.Anthropic()
 
-    def _create(self, request: dict[str, Any], settings: Settings) -> Any:
-        if settings.llm_fallbacks:
-            return self._client.beta.messages.create(**request, betas=[FALLBACK_BETA], fallbacks="default")
-        return self._client.messages.create(**request)
-
     def search_group(self, group: PlannedGroup, settings: Settings, today: date) -> GroupSearchResult:
         result = GroupSearchResult(group_index=group.index, model=settings.search_model)
         request = build_request(group, settings, today)
-        user_message = request["messages"][0]
-        assistant_content: list[Any] = []
         try:
-            response: Any = None
-            for _ in range(MAX_CONTINUATIONS + 1):
-                response = self._create(request, settings)
-                result.usage.add_usage(response.usage)
-                result.queries.extend(extract_queries(response.content))
-                assistant_content.extend(response.content)
-                result.stop_reason = response.stop_reason
-                if response.stop_reason != "pause_turn":
-                    break
-                # Server-side search loop paused: send the assistant turn back unchanged and let it continue.
-                request["messages"] = [user_message, {"role": "assistant", "content": list(assistant_content)}]
-            else:
-                result.error = f"batch still paused after {MAX_CONTINUATIONS} continuations"
+            done = complete_with_continuations(self._client, request, settings)
+            result.usage = done.usage
+            result.queries = extract_queries(done.content)
+            result.stop_reason = done.stop_reason
+            result.served_by = done.served_by
+            if done.error:
+                result.error = "batch " + done.error if done.error.startswith("still paused") else done.error
                 return result
-
-            result.served_by = getattr(response, "model", None)
-            if response.stop_reason == "refusal":
-                details = getattr(response, "stop_details", None)
-                category = getattr(details, "category", None) if details else None
-                result.error = "model declined the request" + (f" ({category})" if category else "")
-                return result
-            if response.stop_reason == "max_tokens":
-                result.error = "response cut off by max_tokens"
-                return result
-            result.raw_text = final_text(assistant_content)
+            result.raw_text = done.text
             result.output = parse_group_output(result.raw_text)
-        except anthropic.AuthenticationError:
-            result.error = "authentication failed - check ANTHROPIC_API_KEY"
-        except anthropic.RateLimitError as exc:
-            result.error = f"rate limited: {exc.message}"
-        except anthropic.BadRequestError as exc:
-            result.error = f"bad request: {exc.message}"
-        except anthropic.APIStatusError as exc:
-            result.error = f"API error {exc.status_code}: {exc.message}"
-        except anthropic.APIConnectionError as exc:
-            result.error = f"connection error: {exc}"
-        except (ValueError, ValidationError) as exc:
-            result.error = f"could not parse model output: {exc}"
+        except (anthropic.APIError, ValueError, ValidationError) as exc:
+            result.error = describe_api_error(exc)
         if result.error:
             log.warning("batch %s failed: %s", group.index, result.error)
         return result

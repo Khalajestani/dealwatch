@@ -1,27 +1,28 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>Dashboard</h1>
+<h1>{{ icon('home') }} Dashboard</h1>
 <div class="cards">
-  <div class="card"><div class="stat">{{ active_count }}</div><div class="stat-label">active items ({{ item_count }} total)</div></div>
-  <div class="card"><div class="stat">{{ due_count }}</div><div class="stat-label">due for a check</div></div>
-  <div class="card"><div class="stat">{{ enabled_retailers }}</div><div class="stat-label">enabled retailers</div></div>
-  <div class="card"><div class="stat">${{ '%.2f'|format(spent_30d) }}</div><div class="stat-label">est. spent, last 30 days ({{ runs_30d }} runs)</div></div>
-  <div class="card"><div class="stat small" style="font-size:16px">{{ next_run.strftime('%a %d %b %H:%M') if next_run else 'off' }}</div><div class="stat-label">next scheduled run</div></div>
+  <a class="card" href="/items"><span class="stat-icon">{{ icon('list') }}</span><div><div class="stat">{{ active_count }}</div><div class="stat-label">active items ({{ item_count }} total)</div></div></a>
+  <a class="card" href="/items?status=due"><span class="stat-icon ok">{{ icon('check') }}</span><div><div class="stat">{{ due_count }}</div><div class="stat-label">due for a check</div></div></a>
+  <a class="card" href="/retailers"><span class="stat-icon info">{{ icon('store') }}</span><div><div class="stat">{{ enabled_retailers }}</div><div class="stat-label">enabled retailers</div></div></a>
+  <a class="card" href="/runs"><span class="stat-icon warn">{{ icon('euro') }}</span><div><div class="stat">${{ '%.2f'|format(spent_30d) }}</div><div class="stat-label">est. spent, 30 days ({{ runs_30d }} runs)</div></div></a>
+  <div class="card"><span class="stat-icon">{{ icon('calendar') }}</span><div><div class="stat" style="font-size:16px">{{ next_run.strftime('%a %d %b %H:%M') if next_run else 'off' }}</div><div class="stat-label">next scheduled run</div></div></div>
 </div>
 
 <div class="card">
   <div class="actions">
     <form method="post" action="/runs/start">
       <label class="inline"><input type="checkbox" name="force" value="1"> include items that are not due yet</label>
-      <button class="primary" type="submit" {% if run_active or not api_ready %}disabled{% endif %}>Run now</button>
+      <button class="primary" type="submit" {% if run_active or not api_ready %}disabled{% endif %}>{{ icon('play', 'sm') }} Run now</button>
     </form>
-    <form method="post" action="/runs/plan"><button type="submit">Dry run (show plan &amp; cost estimate)</button></form>
-    {% if item_count == 0 %}<form method="post" action="/seed-samples"><button type="submit">Add sample items</button></form>{% endif %}
+    <form method="post" action="/runs/plan"><button type="submit">{{ icon('search', 'sm') }} Dry run (plan &amp; cost estimate)</button></form>
+    <a class="btn" href="/items/new">{{ icon('plus', 'sm') }} Add item</a>
+    {% if item_count == 0 %}<form method="post" action="/seed-samples"><button type="submit">{{ icon('sparkles', 'sm') }} Add sample items</button></form>{% endif %}
   </div>
   {% if not api_ready %}<p class="muted small">No Anthropic credentials detected - real runs are disabled. Copy <code>.env.example</code> to <code>.env</code>, set <code>ANTHROPIC_API_KEY</code>, restart.</p>{% endif %}
 </div>
 
-<h2>Latest deals {% if last_complete %}<span class="muted small">from run #{{ last_complete.id }}, {{ last_complete.started_at|localtime(tz) }}</span>{% endif %}</h2>
+<h2>{{ icon('flame') }} Latest deals {% if last_complete %}<span class="muted small">from run #{{ last_complete.id }}, {{ last_complete.started_at|localtime(tz) }}</span>{% endif %}</h2>
 {% if deals %}
 <table>
   <tr><th>#</th><th>Item</th><th>Price</th><th>Per unit</th><th>Shop</th><th>Why</th><th></th></tr>
@@ -33,7 +34,7 @@
     <td>{% if obs.unit_price is not none %}{{ obs.unit_price|money(obs.currency) }}/{{ obs.unit }}{% else %}-{% endif %}</td>
     <td>{{ obs.retailer_domain }}</td>
     <td class="small">{{ obs.reasons or '' }}{% if obs.promo_text %} · {{ obs.promo_text }}{% endif %}{% if obs.valid_until %} · until {{ obs.valid_until }}{% endif %}</td>
-    <td><a href="{{ obs.url }}" target="_blank" rel="noopener">open ↗</a></td>
+    <td><a class="btn small" href="{{ obs.url }}" target="_blank" rel="noopener">{{ icon('external', 'sm') }} open</a></td>
   </tr>
   {% endfor %}
 </table>
@@ -44,7 +45,7 @@
 {% endif %}
 
 {% if last_run %}
-<h2>Last run</h2>
+<h2>{{ icon('play') }} Last run</h2>
 <div class="card">
   <span class="badge {{ last_run.status }}">{{ last_run.status }}</span>
   run <a href="/runs/{{ last_run.id }}">#{{ last_run.id }}</a> · {{ last_run.started_at|localtime(tz) }} · {{ last_run.trigger }} ·

@@ -26,6 +26,15 @@ CATEGORIES: list[tuple[str, str]] = [
     ("other", "Other"),
 ]
 CATEGORY_KEYS = [key for key, _ in CATEGORIES]
+CATEGORY_SHORT = {
+    "household": "Household", "personal_care": "Personal care", "groceries": "Groceries", "health": "Health",
+    "tools_diy": "Tools & DIY", "electronics": "Electronics", "home_garden": "Home & garden", "pets_baby": "Pets & baby", "other": "Other",
+}
+# icon symbol id (see web/templates/_icons.html) and colour class per category - keep the UI consistent
+CATEGORY_ICON = {
+    "household": "droplet", "personal_care": "heart", "groceries": "bag", "health": "activity", "tools_diy": "tool",
+    "electronics": "cpu", "home_garden": "home", "pets_baby": "smile", "other": "tag",
+}
 
 PRIORITIES: list[tuple[str, str]] = [
     ("need", "Need - running low, buy soon at the best available price"),
@@ -60,6 +69,8 @@ class Item(Base):
     target_unit_price: Mapped[float | None] = mapped_column(Float)  # "tell me when <= this per unit"
     check_interval_days: Mapped[int | None] = mapped_column(Integer)  # None -> derived from priority
     notes: Mapped[str | None] = mapped_column(Text)
+    reference_url: Mapped[str | None] = mapped_column(Text)  # product page the item was added from (extra search hint)
+    image_path: Mapped[str | None] = mapped_column(String(300))  # photo file name under data/uploads
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     snooze_until: Mapped[datetime | None] = mapped_column(DateTime)  # skip checks until this date
     last_bought_at: Mapped[datetime | None] = mapped_column(DateTime)

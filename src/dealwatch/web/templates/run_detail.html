@@ -1,15 +1,15 @@
 {% extends "base.html" %}
 {% block title %}Run #{{ run.id }} · Dealwatch{% endblock %}
 {% block content %}
-<p><a href="/runs">← Runs</a></p>
+<p><a href="/runs">{{ icon('arrow-left', 'sm') }} Runs</a></p>
 <h1>Run #{{ run.id }} <span class="badge {{ run.status }}">{{ run.status }}</span>{% if run.dry_run %} <span class="badge">dry run</span>{% endif %}</h1>
 <div class="cards">
-  <div class="card"><div class="stat">{{ run.deal_count }}</div><div class="stat-label">deals</div></div>
-  <div class="card"><div class="stat">{{ run.items_checked }}<span class="muted small">/{{ run.items_planned }}</span></div><div class="stat-label">items checked</div></div>
-  <div class="card"><div class="stat">{{ run.web_searches }}</div><div class="stat-label">web searches</div></div>
-  <div class="card"><div class="stat">{{ run.input_tokens }}</div><div class="stat-label">input tokens ({{ run.cache_read_tokens }} cached)</div></div>
-  <div class="card"><div class="stat">{{ run.output_tokens }}</div><div class="stat-label">output tokens</div></div>
-  <div class="card"><div class="stat">${{ '%.3f'|format(run.cost_usd) }}</div><div class="stat-label">est. cost{% if run.estimated_cost_usd is not none %} (planned ~${{ '%.2f'|format(run.estimated_cost_usd) }}){% endif %}</div></div>
+  <div class="card"><span class="stat-icon warn">{{ icon('flame') }}</span><div><div class="stat">{{ run.deal_count }}</div><div class="stat-label">deals</div></div></div>
+  <div class="card"><span class="stat-icon">{{ icon('list') }}</span><div><div class="stat">{{ run.items_checked }}<span class="muted small">/{{ run.items_planned }}</span></div><div class="stat-label">items checked</div></div></div>
+  <div class="card"><span class="stat-icon info">{{ icon('search') }}</span><div><div class="stat">{{ run.web_searches }}</div><div class="stat-label">web searches</div></div></div>
+  <div class="card"><span class="stat-icon">{{ icon('download') }}</span><div><div class="stat">{{ run.input_tokens }}</div><div class="stat-label">input tokens ({{ run.cache_read_tokens }} cached)</div></div></div>
+  <div class="card"><span class="stat-icon">{{ icon('zap') }}</span><div><div class="stat">{{ run.output_tokens }}</div><div class="stat-label">output tokens</div></div></div>
+  <div class="card"><span class="stat-icon warn">{{ icon('euro') }}</span><div><div class="stat">${{ '%.3f'|format(run.cost_usd) }}</div><div class="stat-label">est. cost{% if run.estimated_cost_usd is not none %} (planned ~${{ '%.2f'|format(run.estimated_cost_usd) }}){% endif %}</div></div></div>
 </div>
 <p class="muted small">{{ run.started_at|localtime(tz) }} · {{ run.trigger }} · model {{ run.model }} · effort {{ run.effort }} · mode {{ run.search_mode }} · {{ run.api_requests }} API calls{% if run.duration_seconds is not none %} · {{ run.duration_seconds|round|int }}s{% endif %} · <a href="/runs/{{ run.id }}/report.md">report.md</a></p>
 {% if run.error %}<div class="flash err">{{ run.error }}</div>{% endif %}
@@ -25,7 +25,7 @@
 {% endif %}
 
 {% if observations %}
-<h2>All offers seen ({{ observations|length }})</h2>
+<h2>{{ icon('tag') }} All offers seen ({{ observations|length }})</h2>
 <table>
   <tr><th>Item</th><th>Shop</th><th>Price</th><th>Per unit</th><th>Promo</th><th>vs baseline</th><th>Conf.</th><th>Listing</th></tr>
   {% for obs, item in observations %}

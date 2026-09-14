@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Settings · Dealwatch{% endblock %}
 {% block content %}
-<h1>Settings</h1>
+<h1>{{ icon('sliders') }} Settings</h1>
 <form method="post" action="/settings">
 {% for group, specs in groups.items() %}
 <div class="card settings-group">
@@ -28,7 +28,7 @@
   {% endfor %}
 </div>
 {% endfor %}
-<button class="primary" type="submit">Save settings</button>
+<button class="primary" type="submit">{{ icon('check', 'sm') }} Save settings</button>
 </form>
 
 <div class="card" style="margin-top:20px">

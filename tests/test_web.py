@@ -1,3 +1,4 @@
+import re
 import time
 
 import pytest
@@ -120,3 +121,83 @@ def test_tracker_exports_and_item_chart(client):
     assert tracker.status_code == 200 and "items with price history" in tracker.text and "viz-spark" not in tracker.text  # one point: no sparkline yet
     observations = client.get("/export/observations.csv").text.splitlines()[0]
     assert "source" in observations and "unit_price" in observations
+
+
+def _png(size=(120, 90)) -> bytes:
+    import io as _io
+
+    from PIL import Image
+
+    buf = _io.BytesIO()
+    Image.new("RGB", size, (30, 90, 200)).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def test_item_filters(client):
+    r = client.get("/items?category=household")
+    assert r.status_code == 200 and "Kitchen towels" in r.text and "Cordless drill" not in r.text
+    assert "Cordless drill" in client.get("/items?priority=wishlist").text
+    assert "Kitchen towels" in client.get("/items?q=keukenpapier").text
+    assert "Toilet paper" not in client.get("/items?q=keukenpapier").text
+    assert "No items match" in client.get("/items?status=paused").text
+    due = client.get("/items?status=due")
+    assert due.text.count('class="badge due"') >= 8 and "Clear" in due.text
+
+
+def test_add_flow_manual_review_and_duplicates(client, session_factory):
+    page = client.get("/items/new")
+    assert page.status_code == 200 and "From a photo" in page.text and "From a link" in page.text and 'data-similar="similar-box"' in page.text
+    assert client.get("/items/new?mode=photo").status_code == 200
+
+    review = client.post("/items/review", data={"mode": "manual", "name": "keukenpapier", "brand": "Page"})
+    assert review.status_code == 200 and "probably already track" in review.text and "Add item anyway" in review.text and 'value="keukenpapier"' in review.text
+    review = client.post("/items/review", data={"mode": "manual", "name": "Garden hose", "category": "home_garden"})
+    assert review.status_code == 200 and "already track" not in review.text and "Entered by hand" in review.text
+    assert "err=" in client.post("/items/review", data={"mode": "manual", "name": " "}, follow_redirects=False).headers["location"]
+
+    r = client.post("/items", data={"name": "Garden hose", "category": "home_garden", "priority": "wishlist", "reference_url": "https://www.gamma.nl/x"}, follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"].startswith("/items/") and "msg=" in r.headers["location"]
+    with session_factory() as s:
+        item = s.scalar(select(Item).where(Item.name == "Garden hose"))
+        assert item.reference_url == "https://www.gamma.nl/x" and item.priority == "wishlist"
+    assert "err=" in client.post("/items", data={"name": "Bad", "reference_url": "ftp://nope"}, follow_redirects=False).headers["location"]
+
+    similar = client.get("/api/items/similar", params={"name": "Toilet paper", "brand": ""}).json()["matches"]
+    assert similar and similar[0]["name"] == "Page Toilet paper" and similar[0]["likely_duplicate"]
+    assert client.get("/api/items/similar", params={"name": "Toilet paper", "exclude": str(similar[0]["id"])}).json()["matches"] == []
+
+
+def test_add_flow_link_and_photo_with_fake_extractor(client, session_factory, env):
+    review = client.post("/items/review", data={"mode": "link", "url": "https://www.bol.com/nl/nl/p/dreft-platinum-vaatwastabletten-60-stuks/93000"})
+    assert review.status_code == 200 and "Extracted from" in review.text and 'value="Dreft"' in review.text and "bol.com" in review.text
+    assert "err=" in client.post("/items/review", data={"mode": "link", "url": "nonsense"}, follow_redirects=False).headers["location"]
+
+    review = client.post("/items/review", data={"mode": "photo"}, files={"photo": ("ariel-pods.png", _png(), "image/png")})
+    assert review.status_code == 200 and "Extracted from your photo" in review.text and 'value="Ariel"' in review.text
+    image_path = re.search(r'name="image_path" value="([0-9a-f]{32}\.jpg)"', review.text).group(1)
+    upload = env.data_dir / "uploads" / image_path
+    assert upload.exists() and f"/uploads/{image_path}" in review.text
+    assert client.get(f"/uploads/{image_path}").status_code == 200
+
+    r = client.post("/items", data={"name": "Pods", "brand": "Ariel", "image_path": image_path}, follow_redirects=False)
+    with session_factory() as s:
+        item = s.scalar(select(Item).where(Item.name == "Pods"))
+        assert item.image_path == image_path
+    assert f"/uploads/{image_path}" in client.get(f"/items/{item.id}").text
+    assert f"/uploads/{image_path}" in client.get("/items").text
+    client.post(f"/items/{item.id}/action", data={"action": "remove_photo"}, follow_redirects=False)
+    assert not upload.exists()
+    with session_factory() as s:
+        assert s.get(Item, item.id).image_path is None
+
+    bad = client.post("/items/review", data={"mode": "photo"}, files={"photo": ("x.txt", b"junk", "text/plain")}, follow_redirects=False)
+    assert bad.status_code == 303 and "err=" in bad.headers["location"]
+
+    review = client.post("/items/review", data={"mode": "photo"}, files={"photo": ("tmp.png", _png(), "image/png")})
+    image_path = re.search(r'name="image_path" value="([0-9a-f]{32}\.jpg)"', review.text).group(1)
+    client.post("/items/review/discard", data={"image_path": image_path}, follow_redirects=False)
+    assert not (env.data_dir / "uploads" / image_path).exists()
+    # a forged path is ignored on create
+    r = client.post("/items", data={"name": "Forged", "image_path": "../../etc/passwd"}, follow_redirects=False)
+    with session_factory() as s:
+        assert s.scalar(select(Item).where(Item.name == "Forged")).image_path is None

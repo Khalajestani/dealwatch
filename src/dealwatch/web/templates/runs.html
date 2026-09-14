@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 {% block title %}Runs · Dealwatch{% endblock %}
 {% block content %}
-<h1>Runs</h1>
+<h1>{{ icon('play') }} Runs</h1>
 <div class="card actions">
   <form method="post" action="/runs/start">
     <label class="inline"><input type="checkbox" name="force" value="1"> include items that are not due yet</label>
-    <button class="primary" type="submit" {% if run_active or not api_ready %}disabled{% endif %}>Run now</button>
+    <button class="primary" type="submit" {% if run_active or not api_ready %}disabled{% endif %}>{{ icon('play', 'sm') }} Run now</button>
   </form>
-  <form method="post" action="/runs/plan"><button type="submit">Dry run (plan &amp; estimate only)</button></form>
+  <form method="post" action="/runs/plan"><button type="submit">{{ icon('search', 'sm') }} Dry run (plan &amp; estimate only)</button></form>
   {% if run_active %}<span class="badge running">a run is in progress - refresh in a bit</span>{% endif %}
 </div>
 {% if runs %}

@@ -10,7 +10,9 @@ import csv
 import io
 import json
 import logging
+import re
 import threading
+import uuid
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from pathlib import Path
@@ -18,6 +20,7 @@ from typing import Callable
 from urllib.parse import quote
 
 from fastapi import FastAPI, Form, HTTPException, Request
+from markupsafe import Markup
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -27,14 +30,16 @@ from sqlalchemy.orm import Session, sessionmaker
 from ..config import MODEL_CHOICES, Env, load_env
 from ..db import init_db, make_engine, make_session_factory
 from ..domains import is_valid_domain, normalize_domain
-from ..models import CATEGORIES, CATEGORY_KEYS, PRIORITIES, PRIORITY_KEYS, RETAILER_STATUSES, UNITS, Item, Observation, PricePoint, Report, Retailer, Run, RunItem, utcnow
+from ..models import CATEGORIES, CATEGORY_ICON, CATEGORY_KEYS, CATEGORY_SHORT, PRIORITIES, PRIORITY_KEYS, RETAILER_STATUSES, UNITS, Item, Observation, PricePoint, Report, Retailer, Run, RunItem, utcnow
 from ..seed import seed_retailers, seed_sample_items
+from ..services.extract import AnthropicExtractor, ExtractedItem, Extractor, FakeExtractor, prepare_image
 from ..services.insights import all_item_insights, item_insight, overview, retailer_breakdown
 from ..services.llm import AnthropicSearchClient, FakeSearchClient, SearchClient
 from ..services.planner import is_due
 from ..services.report import local_time, money
 from ..services.runner import RunInProgress, execute_run, is_run_active
 from ..services.scheduler import RunScheduler
+from ..services.similar import find_similar, normalize
 from ..settings import SPECS, get_settings, save_settings
 from .charts import Series, line_chart, sparkline
 
@@ -63,6 +68,7 @@ def create_app(
     session_factory: sessionmaker[Session] | None = None,
     search_client: SearchClient | None = None,
     start_scheduler: bool | None = None,
+    extractor: Extractor | None = None,
 ) -> FastAPI:
     env = env or load_env()
     if session_factory is None:
@@ -93,14 +99,32 @@ def create_app(
     app.state.scheduler = scheduler
     app.state.client_factory = client_factory
     app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
+    uploads_dir = env.data_dir / "uploads"
+    uploads_dir.mkdir(parents=True, exist_ok=True)
+    app.mount("/uploads", StaticFiles(directory=uploads_dir), name="uploads")
+
+    def icon(name: str, size: str = "") -> Markup:
+        return Markup(f'<svg class="ic {size}" aria-hidden="true"><use href="#i-{name}"/></svg>')
 
     templates = Jinja2Templates(directory=BASE_DIR / "templates")
     templates.env.filters["money"] = money
     templates.env.filters["localtime"] = local_time
     templates.env.filters["pct"] = lambda v: "-" if v is None else f"{v:+.0f}%"
-    templates.env.globals.update(categories=CATEGORIES, priorities=PRIORITIES, units=UNITS, statuses=RETAILER_STATUSES, model_choices=MODEL_CHOICES)
+    templates.env.globals.update(
+        categories=CATEGORIES, category_short=CATEGORY_SHORT, category_icon=CATEGORY_ICON, priorities=PRIORITIES, units=UNITS,
+        statuses=RETAILER_STATUSES, model_choices=MODEL_CHOICES, icon=icon,
+    )
 
     api_ready = env.has_api_credentials or env.fake_llm or search_client is not None
+
+    def extractor_factory() -> Extractor | None:
+        if extractor is not None:
+            return extractor
+        if env.fake_llm:
+            return FakeExtractor()
+        return AnthropicExtractor() if env.has_api_credentials else None
+
+    extract_ready = extractor is not None or env.fake_llm or env.has_api_credentials
 
     def render(request: Request, template: str, **context):
         with session_factory() as session:
@@ -185,14 +209,130 @@ def create_app(
         return best
 
     @app.get("/items", response_class=HTMLResponse)
-    def items_page(request: Request):
+    def items_page(request: Request, q: str = "", category: str = "", priority: str = "", status: str = ""):
         with session_factory() as session:
             settings = get_settings(session)
             now = utcnow()
-            items = list(session.scalars(select(Item).order_by(Item.active.desc(), Item.category, Item.name)))
-            best = _latest_best_offers(session, [i.id for i in items])
-            due_ids = {i.id for i in items if is_due(i, now, settings)}
-        return render(request, "items.html", nav="items", items=items, best=best, due_ids=due_ids)
+            all_items = list(session.scalars(select(Item).order_by(Item.active.desc(), Item.category, Item.name)))
+            best = _latest_best_offers(session, [i.id for i in all_items])
+            due_ids = {i.id for i in all_items if is_due(i, now, settings)}
+        needle = normalize(q)
+        items = []
+        for item in all_items:
+            if category and item.category != category:
+                continue
+            if priority and item.priority != priority:
+                continue
+            if needle and needle not in normalize(" ".join(filter(None, [item.display_name, item.search_hints, item.notes, item.category]))):
+                continue
+            offer = best.get(item.id)
+            snoozed = bool(item.snooze_until and item.snooze_until > now)
+            if status == "due" and item.id not in due_ids:
+                continue
+            if status == "waiting" and not (item.active and not snoozed and item.id not in due_ids):
+                continue
+            if status == "snoozed" and not snoozed:
+                continue
+            if status == "paused" and item.active:
+                continue
+            if status == "deal" and not (offer and offer.is_deal):
+                continue
+            if status == "untracked" and offer is not None:
+                continue
+            items.append(item)
+        filters = {"q": q, "category": category, "priority": priority, "status": status, "any": bool(q or category or priority or status)}
+        return render(request, "items.html", nav="items", items=items, total=len(all_items), best=best, due_ids=due_ids, due_count=len(due_ids), filters=filters)
+
+    # ---- adding items: manual / link / photo -> review card -> create ------------------------
+
+    @app.get("/items/new", response_class=HTMLResponse)
+    def item_new(request: Request, mode: str = "manual"):
+        mode = mode if mode in ("manual", "link", "photo") else "manual"
+        return render(request, "item_new.html", nav="items", mode=mode, prefill={}, extract_ready=extract_ready)
+
+    def _draft_from_form(form: dict) -> dict:
+        return {k: (form.get(k) or "").strip() or None for k in ("name", "brand", "category", "priority", "search_hints", "unit", "target_price", "target_unit_price", "check_interval_days", "reference_url", "notes")} | {"bulk_ok": bool(form.get("bulk_ok"))}
+
+    def _draft_from_extracted(item: ExtractedItem, *, reference_url: str | None = None) -> dict:
+        hints = item.search_hints
+        if item.pack_quantity and item.unit and (not hints or item.unit not in hints):
+            hints = f"{hints + ', ' if hints else ''}{item.pack_quantity:g} {item.unit}"
+        return {
+            "name": item.name or (item.product_title or "")[:200], "brand": item.brand, "category": item.category, "priority": "stock_up",
+            "search_hints": hints, "unit": item.unit, "target_price": None, "target_unit_price": None, "check_interval_days": None,
+            "reference_url": reference_url, "notes": None, "bulk_ok": True,
+        }
+
+    def _save_upload(data: bytes) -> str:
+        jpeg, _ = prepare_image(data)
+        name = f"{uuid.uuid4().hex}.jpg"
+        (uploads_dir / name).write_bytes(jpeg)
+        return name
+
+    def _safe_upload_name(name: str | None) -> str | None:
+        name = (name or "").strip()
+        return name if re.fullmatch(r"[0-9a-f]{32}\.jpg", name) and (uploads_dir / name).exists() else None
+
+    @app.post("/items/review", response_class=HTMLResponse)
+    async def item_review(request: Request):
+        form = await request.form()
+        mode = form.get("mode") or "manual"
+        extracted: ExtractedItem | None = None
+        image_path: str | None = None
+        if mode == "manual":
+            draft = _draft_from_form(dict(form))
+            if not draft.get("name"):
+                return redirect("/items/new?mode=manual", err="A name is required.")
+        elif mode in ("link", "photo"):
+            ext = extractor_factory()
+            if ext is None:
+                return redirect(f"/items/new?mode={mode}", err="Link/photo extraction needs ANTHROPIC_API_KEY in .env (or DEALWATCH_FAKE_LLM=1).")
+            with session_factory() as session:
+                settings = get_settings(session)
+            if mode == "link":
+                url = (form.get("url") or "").strip()
+                result = ext.from_url(url, settings)
+                if not result.ok:
+                    return redirect("/items/new?mode=link", err=f"Could not read that page: {result.error}")
+                extracted = result.item
+                draft = _draft_from_extracted(extracted, reference_url=url)
+            else:
+                upload = form.get("photo")
+                data = await upload.read() if hasattr(upload, "read") else b""
+                if not data:
+                    return redirect("/items/new?mode=photo", err="Please choose a photo.")
+                try:
+                    image_path = _save_upload(data)
+                except ValueError as exc:
+                    return redirect("/items/new?mode=photo", err=str(exc))
+                result = ext.from_image(data, settings, filename=getattr(upload, "filename", "") or "photo")
+                if not result.ok:
+                    (uploads_dir / image_path).unlink(missing_ok=True)
+                    return redirect("/items/new?mode=photo", err=f"Could not read the photo: {result.error}")
+                extracted = result.item
+                draft = _draft_from_extracted(extracted)
+            if not draft.get("name"):
+                draft["name"] = ""
+        else:
+            raise HTTPException(400, "unknown mode")
+        with session_factory() as session:
+            items = list(session.scalars(select(Item)))
+            similar = find_similar(draft.get("name") or "", draft.get("brand"), items)
+        return render(request, "item_review.html", nav="items", mode=mode, draft=draft, extracted=extracted, image_path=image_path, similar=similar)
+
+    @app.post("/items/review/discard")
+    def item_review_discard(image_path: str = Form("")):
+        name = _safe_upload_name(image_path)
+        if name:
+            (uploads_dir / name).unlink(missing_ok=True)
+        return redirect("/items/new?mode=photo", msg="Photo discarded.")
+
+    @app.get("/api/items/similar")
+    def api_items_similar(name: str = "", brand: str = "", exclude: str = ""):
+        exclude_id = int(exclude) if exclude.isdigit() else None
+        with session_factory() as session:
+            matches = find_similar(name, brand or None, list(session.scalars(select(Item))), exclude_id=exclude_id)
+            return {"matches": [{"id": m.item.id, "name": m.item.display_name, "category": CATEGORY_SHORT.get(m.item.category, m.item.category), "score": m.score, "likely_duplicate": m.likely_duplicate} for m in matches]}
 
     def _apply_item_form(item: Item, form: dict) -> None:
         name = (form.get("name") or "").strip()
@@ -216,6 +356,10 @@ def create_app(
         item.target_unit_price = _float_or_none(form.get("target_unit_price"))
         item.check_interval_days = _int_or_none(form.get("check_interval_days"))
         item.notes = (form.get("notes") or "").strip() or None
+        url = (form.get("reference_url") or "").strip()
+        if url and not url.lower().startswith(("http://", "https://")):
+            raise ValueError("Product link must start with http:// or https://")
+        item.reference_url = url or None
 
     @app.post("/items")
     async def add_item(request: Request):
@@ -224,11 +368,12 @@ def create_app(
         try:
             _apply_item_form(item, form)
         except ValueError as exc:
-            return redirect("/items", err=str(exc))
+            return redirect("/items/new", err=str(exc))
+        item.image_path = _safe_upload_name(form.get("image_path"))
         with session_factory() as session:
             session.add(item)
             session.commit()
-        return redirect("/items", msg=f"Added '{item.display_name}'. It will be checked in the next run.")
+        return redirect(f"/items/{item.id}", msg=f"Added '{item.display_name}'. It will be checked in the next run.")
 
     @app.get("/items/{item_id}", response_class=HTMLResponse)
     def item_detail(request: Request, item_id: int):
@@ -276,6 +421,9 @@ def create_app(
             settings = get_settings(session)
             msg = "Done."
             if action == "delete":
+                name = _safe_upload_name(item.image_path)
+                if name:
+                    (uploads_dir / name).unlink(missing_ok=True)
                 session.delete(item)
                 session.commit()
                 return redirect("/items", msg=f"Deleted '{item.display_name}'.")
@@ -293,6 +441,12 @@ def create_app(
                 item.last_checked_at = None
                 item.snooze_until = None
                 msg = "Will be checked in the next run."
+            elif action == "remove_photo":
+                name = _safe_upload_name(item.image_path)
+                if name:
+                    (uploads_dir / name).unlink(missing_ok=True)
+                item.image_path = None
+                msg = "Photo removed."
             else:
                 raise HTTPException(400, "unknown action")
             session.commit()
