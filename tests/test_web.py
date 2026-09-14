@@ -94,3 +94,29 @@ def test_dry_run_and_background_run(client):
     assert detail.status_code == 200 and "All offers seen" in detail.text
     assert "Latest deals" in client.get("/").text
     assert client.get(f"/runs/{latest['id']}/report.md").text.startswith("# Dealwatch report")
+
+
+def test_tracker_exports_and_item_chart(client):
+    empty = client.get("/tracker")
+    assert empty.status_code == 200 and "No price history yet" in empty.text
+    assert client.get("/export/nope.csv").status_code == 404
+
+    client.post("/runs/start", data={"force": "1"}, follow_redirects=False)
+    for _ in range(100):
+        latest = client.get("/api/runs/latest").json()["run"]
+        if latest and latest["status"] != "running":
+            break
+        time.sleep(0.1)
+    csv_text = client.get("/export/price_points.csv").text
+    header, first = csv_text.splitlines()[:2]
+    assert header.startswith("id,item_id,run_id,observed_at") and "min_unit_price" in header
+    item_id = int(first.split(",")[1])
+    page = client.get(f"/items/{item_id}")
+    assert page.status_code == 200 and "viz-line-chart" in page.text and "Price points (one per check)" in page.text
+    assert client.get(f"/items/{item_id}/price_points.csv").headers["content-type"].startswith("text/csv")
+    prices = client.get(f"/api/items/{item_id}/prices").json()
+    assert prices["stats"]["checks"] >= 1 and prices["points"] and prices["item"]["id"] == item_id
+    tracker = client.get("/tracker")
+    assert tracker.status_code == 200 and "items with price history" in tracker.text and "viz-spark" not in tracker.text  # one point: no sparkline yet
+    observations = client.get("/export/observations.csv").text.splitlines()[0]
+    assert "source" in observations and "unit_price" in observations

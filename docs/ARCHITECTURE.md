@@ -31,10 +31,17 @@ pipeline without the web app. Everything shares `execute_run()` and a process-wi
 - **Observation** - one offer seen: shop, title, url, price, list price, pack quantity, unit, unit price, promo type/text,
   validity, confidence, evidence, plus assessment fields (`baseline_price`, `discount_pct`, `under_target`,
   `is_deal`, `score`, `reasons`). This table is the price memory.
+- **PricePoint** - one row per (item, run) that had offers: `n_offers`, `n_retailers`, pack-level `min/avg/median/max_price`,
+  per-unit `min/avg/median/max_unit_price`, the best offer (`best_price`, `best_unit_price`, `best_pack_quantity`,
+  `best_domain`, `best_url`, `best_promo_type`), `promo_count`, `deal_count`, `sources`. Written by
+  `runner._record_price_points` after assessment; it is the tracked time series (baselines, Tracker page, exports).
 - **Report** - markdown + HTML per run. **Setting** - key/value store behind `settings.Settings`.
 
 ## Run lifecycle (`services/runner.py`)
 
+0. Direct deal sources (`services/sources`, `_run_sources`): every enabled source (its retailer must be `enabled`)
+   receives all active, non-snoozed items and returns offers; they are stored as observations with `source=<name>`.
+   Sources never touch `last_checked_at` - LLM due-logic is independent. No adapters ship yet (see ROADMAP).
 1. `build_plan` (planner): due items → sorted by (priority rank, last checked, id) → grouped by category → chunked to
    `group_size` → sorted by urgency → capped at `max_groups_per_run` (rest = deferred). Per batch: retailers serving
    the category (allowlist mode) or the global blocklist (open mode), `max_uses = min(max_searches_per_group, 2n+1)`,
@@ -42,10 +49,29 @@ pipeline without the web app. Everything shares `execute_run()` and a process-wi
 2. Batches run in a `ThreadPoolExecutor(parallel_groups)`. As each completes, `_persist_group` adds usage to the run,
    drops offers whose URL domain is outside the batch allowlist / inside the blocklist / from a blocked retailer,
    stores observations with computed unit prices, writes RunItems and updates `last_checked_at` (not on error).
-3. `_assess_run`: per observation, baseline (median of comparable prices in the window, strictly before this run) and
+3. `_assess_run`: per observation, baseline (`pricing.baseline_for_item`: median of the best price per check from
+   price points in the window, strictly before this run; falls back to raw observations for legacy data) and
    `pricing.assess_offer` → deal flags, score, reasons. `deal_count` counts items, not offers.
-4. `_finalize`: status, cost estimate from real usage, `log_json`, report (DB + `data/reports/run-NNNN.md`),
+4. `_record_price_points`: aggregate this run's observations per item (`pricing.summarize_offers`) into `price_points`.
+5. `_finalize`: status, cost estimate from real usage, `log_json`, report (DB + `data/reports/run-NNNN.md`),
    optional notification (failures are logged, never fail the run).
+
+## Insights (`services/insights.py`)
+
+Derived on demand from price points, never stored. Per item (`item_insight`): basis (per unit when at least half the
+points have unit prices, else per pack), series of (best, average) per check, last/previous, all-time low (+ when,
+where), high, average over all checks and over 30 days, change vs previous and vs 30-day average, trend (least-squares
+slope over the last 8 checks as % of mean per check; ±1.5% = flat), volatility (population stdev / mean), the shop
+that was cheapest most often, promo share, days tracked, `at_all_time_low` / `is_new_low`. `retailer_breakdown` groups
+observations per shop; `overview` gives movers (± threshold vs previous check), items at their low, a shop leaderboard.
+The report's "Price tracker" section and the `/tracker` page both use these.
+
+## Charts (`web/charts.py`, `static/tracker.js`)
+
+Server-rendered inline SVG: a two-series line chart (best price, average of offers) per item and sparklines in the
+tracker table. Colours are CSS tokens (`.viz` in `style.css`) taken from a validated palette (slots 1-2, light and dark
+steps). The JS adds a crosshair that snaps to the nearest check and one tooltip listing both series; the table under
+the chart is the non-hover fallback.
 
 Dry runs stop after step 1 and store the plan as the report (`status=planned`).
 
@@ -68,7 +94,7 @@ Per batch, one `messages.create` (via `beta.messages.create` when server-side fa
 
 ## Cost controls
 
-Allowlisted domains (fewer irrelevant results) · batches of several items per call · `max_uses` per batch ·
+Direct sources first (free) · allowlisted domains (fewer irrelevant results) · batches of several items per call · `max_uses` per batch ·
 batch cap per run · per-priority intervals and snoozing · cached static prompt · trimmed responses ·
 structured output (no retry round-trips for JSON) · effort setting · dry-run estimate · real usage recorded per run.
 

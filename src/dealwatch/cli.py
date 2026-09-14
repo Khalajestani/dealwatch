@@ -12,7 +12,7 @@ from sqlalchemy import select
 from .config import Env, load_env
 from .db import init_db, make_engine, make_session_factory
 from .domains import is_valid_domain, normalize_domain
-from .models import CATEGORY_KEYS, PRIORITY_KEYS, RETAILER_STATUSES, Item, Report, Retailer, Run, utcnow
+from .models import CATEGORY_KEYS, PRIORITY_KEYS, RETAILER_STATUSES, Item, Observation, PricePoint, Report, Retailer, Run, RunItem, utcnow
 from .seed import seed_retailers, seed_sample_items
 from .settings import SPECS, get_settings, save_settings
 
@@ -130,6 +130,51 @@ def report(run_id: int | None = typer.Argument(None, help="Run id (default: late
             typer.echo("No report found.", err=True)
             raise typer.Exit(1)
         typer.echo(rep.markdown)
+
+
+@app.command()
+def tracker():
+    """Per-item price tracker summary (best price per check, change, trend, lowest ever, best shop)."""
+    from .services.insights import all_item_insights
+
+    _, session_factory = _bootstrap()
+    with session_factory() as session:
+        insights = all_item_insights(session, utcnow())
+    typer.echo(f"{'item':<38} {'checks':>6} {'last best':>14} {'prev%':>7} {'30d avg':>9} {'lowest':>9} {'trend':<8} cheapest most often")
+    for i in insights:
+        if not i.n_points:
+            typer.echo(f"{i.item.display_name[:38]:<38} {0:>6}  (no price points yet)")
+            continue
+        prev = f"{i.change_vs_prev_pct:+.0f}%" if i.change_vs_prev_pct is not None else "-"
+        avg30 = f"{i.avg_30d:.2f}" if i.avg_30d is not None else "-"
+        last = f"{i.last.best:.2f}{i.unit_label}"
+        typer.echo(f"{i.item.display_name[:38]:<38} {i.n_points:>6} {last:>14} {prev:>7} {avg30:>9} {i.low:>9.2f} {i.trend:<8} {i.best_domain or '-'}")
+
+
+@app.command()
+def export(table: str = typer.Argument(..., help="items | retailers | runs | observations | price_points | run_items"), out: str | None = typer.Option(None, help="Output CSV path (default: stdout)")):
+    """Export a table as CSV for your own analysis (or query data/dealwatch.db directly with DuckDB/pandas)."""
+    import csv
+
+    models = {"items": Item, "retailers": Retailer, "runs": Run, "observations": Observation, "price_points": PricePoint, "run_items": RunItem}
+    model = models.get(table)
+    if model is None:
+        typer.echo(f"Unknown table. Choose one of: {', '.join(models)}", err=True)
+        raise typer.Exit(2)
+    _, session_factory = _bootstrap()
+    skip = {"plan_json", "log_json"} if table == "runs" else set()
+    columns = [c.name for c in model.__table__.columns if c.name not in skip]
+    handle = open(out, "w", newline="", encoding="utf-8") if out else sys.stdout
+    writer = csv.writer(handle)
+    writer.writerow(columns)
+    with session_factory() as session:
+        count = 0
+        for row in session.scalars(select(model).order_by(model.id)):
+            writer.writerow([getattr(row, c) for c in columns])
+            count += 1
+    if out:
+        handle.close()
+        typer.echo(f"Wrote {count} rows to {out}", err=True)
 
 
 # ---- items ------------------------------------------------------------------------------------

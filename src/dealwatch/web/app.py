@@ -6,6 +6,8 @@ the UI stays responsive; the Runs page shows progress via the Run row that is wr
 
 from __future__ import annotations
 
+import csv
+import io
 import json
 import logging
 import threading
@@ -16,7 +18,7 @@ from typing import Callable
 from urllib.parse import quote
 
 from fastapi import FastAPI, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import func, select
@@ -25,14 +27,16 @@ from sqlalchemy.orm import Session, sessionmaker
 from ..config import MODEL_CHOICES, Env, load_env
 from ..db import init_db, make_engine, make_session_factory
 from ..domains import is_valid_domain, normalize_domain
-from ..models import CATEGORIES, CATEGORY_KEYS, PRIORITIES, PRIORITY_KEYS, RETAILER_STATUSES, UNITS, Item, Observation, Report, Retailer, Run, RunItem, utcnow
+from ..models import CATEGORIES, CATEGORY_KEYS, PRIORITIES, PRIORITY_KEYS, RETAILER_STATUSES, UNITS, Item, Observation, PricePoint, Report, Retailer, Run, RunItem, utcnow
 from ..seed import seed_retailers, seed_sample_items
+from ..services.insights import all_item_insights, item_insight, overview, retailer_breakdown
 from ..services.llm import AnthropicSearchClient, FakeSearchClient, SearchClient
 from ..services.planner import is_due
 from ..services.report import local_time, money
 from ..services.runner import RunInProgress, execute_run, is_run_active
 from ..services.scheduler import RunScheduler
 from ..settings import SPECS, get_settings, save_settings
+from .charts import Series, line_chart, sparkline
 
 log = logging.getLogger(__name__)
 BASE_DIR = Path(__file__).resolve().parent
@@ -237,8 +241,17 @@ def create_app(
             )
             checks = list(session.scalars(select(RunItem).where(RunItem.item_id == item_id).order_by(RunItem.id.desc()).limit(10)))
             settings = get_settings(session)
-            due = is_due(item, utcnow(), settings)
-        return render(request, "item_detail.html", nav="items", item=item, history=history, checks=checks, due=due)
+            now = utcnow()
+            due = is_due(item, now, settings)
+            insight = item_insight(session, item, now)
+            points = list(session.scalars(select(PricePoint).where(PricePoint.item_id == item_id).order_by(PricePoint.observed_at.desc())))
+            breakdown = retailer_breakdown(session, item_id, insight.basis)
+            chart_html = line_chart(
+                [Series("Best price", [(p.at, p.best) for p in insight.points]), Series("Average of offers", [(p.at, p.avg) for p in insight.points])],
+                chart_id=f"item-{item_id}", title=f"Price per check{insight.unit_label} - {item.display_name}", unit_suffix=insight.unit_label,
+            ) if insight.points else ""
+        return render(request, "item_detail.html", nav="items", item=item, history=history, checks=checks, due=due,
+                      insight=insight, points=points, breakdown=breakdown, chart_html=chart_html)
 
     @app.post("/items/{item_id}")
     async def update_item(request: Request, item_id: int):
@@ -428,6 +441,65 @@ def create_app(
         with session_factory() as session:
             added = seed_sample_items(session)
         return redirect("/items", msg=f"Added {added} sample item(s).")
+
+    # ---- tracker / insights -------------------------------------------------------------------
+
+    @app.get("/tracker", response_class=HTMLResponse)
+    def tracker_page(request: Request):
+        with session_factory() as session:
+            now = utcnow()
+            insights = all_item_insights(session, now)
+            ov = overview(session, now, insights)
+            sparks = {i.item.id: sparkline([p.best for p in i.points][-12:]) for i in insights if i.n_points >= 2}
+        tracked = sorted([i for i in insights if i.n_points], key=lambda i: (i.change_vs_prev_pct if i.change_vs_prev_pct is not None else 0))
+        untracked = [i for i in insights if not i.n_points]
+        return render(request, "tracker.html", nav="tracker", ov=ov, tracked=tracked, untracked=untracked, sparks=sparks)
+
+    _EXPORTS = {"items": Item, "retailers": Retailer, "runs": Run, "observations": Observation, "price_points": PricePoint, "run_items": RunItem}
+    _EXPORT_SKIP = {"runs": {"plan_json", "log_json"}}
+
+    def _csv_response(model, filename: str, where=None) -> Response:
+        skip = _EXPORT_SKIP.get(filename, set())
+        columns = [c.name for c in model.__table__.columns if c.name not in skip]
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(columns)
+        with session_factory() as session:
+            query = select(model).order_by(model.id)
+            if where is not None:
+                query = query.where(where)
+            for row in session.scalars(query):
+                writer.writerow([getattr(row, c) for c in columns])
+        return Response(buffer.getvalue(), media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="{filename}.csv"'})
+
+    @app.get("/export/{table}.csv")
+    def export_csv(table: str):
+        model = _EXPORTS.get(table)
+        if model is None:
+            raise HTTPException(404, f"unknown table; choose one of {', '.join(_EXPORTS)}")
+        return _csv_response(model, table)
+
+    @app.get("/items/{item_id}/price_points.csv")
+    def export_item_points(item_id: int):
+        return _csv_response(PricePoint, f"item-{item_id}-price_points", PricePoint.item_id == item_id)
+
+    @app.get("/api/items/{item_id}/prices")
+    def api_item_prices(item_id: int):
+        with session_factory() as session:
+            item = session.get(Item, item_id)
+            if item is None:
+                raise HTTPException(404)
+            ins = item_insight(session, item, utcnow())
+            return {
+                "item": {"id": item.id, "name": item.display_name, "unit": item.unit, "basis": ins.basis},
+                "stats": {
+                    "checks": ins.n_points, "first_seen": ins.first_seen.isoformat() if ins.first_seen else None,
+                    "last_best": ins.last.best if ins.last else None, "all_time_low": ins.low, "all_time_low_at": ins.low_at.isoformat() if ins.low_at else None,
+                    "avg_30d": ins.avg_30d, "change_vs_prev_pct": ins.change_vs_prev_pct, "trend": ins.trend, "volatility_pct": ins.volatility_pct,
+                    "best_shop": ins.best_domain, "promo_share_pct": ins.promo_share_pct,
+                },
+                "points": [{"at": p.at.isoformat(), "best": p.best, "avg": p.avg, "shop": p.domain, "run_id": p.run_id, "promo": p.promo} for p in ins.points],
+            }
 
     # ---- small JSON API (handy for scripts/agents) --------------------------------------------
 

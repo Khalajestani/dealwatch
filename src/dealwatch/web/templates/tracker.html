@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Tracker · Dealwatch{% endblock %}
+{% block content %}
+<h1>Price tracker</h1>
+<div class="cards">
+  <div class="card"><div class="stat">{{ ov.items_tracked }}<span class="muted small">/{{ ov.items_total }}</span></div><div class="stat-label">items with price history</div></div>
+  <div class="card"><div class="stat">{{ ov.points }}</div><div class="stat-label">price points ({{ ov.observations }} offers, {{ ov.runs }} runs)</div></div>
+  <div class="card"><div class="stat">{{ ov.at_low|length }}</div><div class="stat-label">items at their lowest price ever</div></div>
+  <div class="card"><div class="stat small" style="font-size:16px">{{ ov.first_point_at|localtime(tz) if ov.first_point_at else '-' }}</div><div class="stat-label">tracking since</div></div>
+  <div class="card"><div class="stat">${{ '%.2f'|format(ov.spend_30d) }}</div><div class="stat-label">API spend, last 30 days</div></div>
+</div>
+
+{% if ov.movers_down or ov.movers_up or ov.at_low %}
+<div class="card">
+  {% if ov.at_low %}<p><strong>At lowest ever:</strong> {% for i in ov.at_low %}<a href="/items/{{ i.item.id }}">{{ i.item.display_name }}</a> ({{ i.last.best|money(settings.currency) }}{{ i.unit_label }}){% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
+  {% if ov.movers_down %}<p><strong>Cheaper than last check:</strong> {% for i in ov.movers_down %}<a href="/items/{{ i.item.id }}">{{ i.item.display_name }}</a> <span class="delta-down">▼ {{ i.change_vs_prev_pct|abs|round(0)|int }}%</span>{% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
+  {% if ov.movers_up %}<p><strong>More expensive than last check:</strong> {% for i in ov.movers_up %}<a href="/items/{{ i.item.id }}">{{ i.item.display_name }}</a> <span class="delta-up">▲ {{ i.change_vs_prev_pct|round(0)|int }}%</span>{% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
+</div>
+{% endif %}
+
+{% if tracked %}
+<table>
+  <tr><th>Item</th><th>Last best</th><th>vs prev</th><th>30d avg</th><th>Lowest ever</th><th>Trend</th><th>Cheapest most often</th><th>Checks</th><th>Since</th></tr>
+  {% for i in tracked %}
+  <tr>
+    <td><a href="/items/{{ i.item.id }}">{{ i.item.display_name }}</a>{% if i.at_all_time_low %} <span class="badge ok">lowest ever</span>{% endif %}</td>
+    <td class="num">{{ i.last.best|money(settings.currency) }}<span class="muted small">{{ i.unit_label }}</span><div class="muted small">{{ i.last.domain }}</div></td>
+    <td class="num">{% if i.change_vs_prev_pct is none %}<span class="muted">first</span>{% elif i.change_vs_prev_pct < 0 %}<span class="delta-down">▼ {{ i.change_vs_prev_pct|abs|round(0)|int }}%</span>{% elif i.change_vs_prev_pct > 0 %}<span class="delta-up">▲ {{ i.change_vs_prev_pct|round(0)|int }}%</span>{% else %}=</span>{% endif %}</td>
+    <td class="num">{{ i.avg_30d|money(settings.currency) if i.avg_30d is not none else '-' }}</td>
+    <td class="num">{{ i.low|money(settings.currency) }}<div class="muted small">{{ i.low_at|localtime(tz) }}</div></td>
+    <td>{{ sparks.get(i.item.id, '')|safe }} <span class="small muted">{{ i.trend }}</span></td>
+    <td class="small">{{ i.best_domain or '-' }}{% if i.best_domain_share_pct %} ({{ i.best_domain_share_pct }}%){% endif %}</td>
+    <td class="num">{{ i.n_points }}</td>
+    <td class="small">{{ i.first_seen|localtime(tz) }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="muted">No price history yet. Every run records one price point per item found (min / average / median / max, per pack and per unit, plus the best shop). Run once to start tracking.</p>
+{% endif %}
+{% if untracked %}<p class="small muted">Not tracked yet: {% for i in untracked %}<a href="/items/{{ i.item.id }}">{{ i.item.display_name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
+
+{% if ov.leaderboard %}
+<h2>Shops that were cheapest most often</h2>
+<table>
+  <tr><th>Shop</th><th>Checks won</th></tr>
+  {% for domain, wins in ov.leaderboard %}<tr><td>{{ domain }}</td><td class="num">{{ wins }}</td></tr>{% endfor %}
+</table>
+{% endif %}
+
+<div class="card small muted" style="margin-top:20px">
+  <strong>Your data.</strong> Everything is in <code>data/dealwatch.db</code> (SQLite). Tables: <code>items</code>, <code>retailers</code>, <code>runs</code>, <code>run_items</code>, <code>observations</code> (every offer seen, with <code>source</code>), <code>price_points</code> (one row per item per run: min/avg/median/max, per unit, best offer).
+  CSV: <a href="/export/price_points.csv">price_points</a> · <a href="/export/observations.csv">observations</a> · <a href="/export/items.csv">items</a> · <a href="/export/runs.csv">runs</a>. JSON per item: <code>/api/items/{id}/prices</code>.
+</div>
+{% endblock %}

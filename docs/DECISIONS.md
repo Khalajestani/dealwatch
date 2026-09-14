@@ -37,3 +37,16 @@ actionable. Open mode exists for discovery, with blocked shops excluded.
 if it ever becomes multi-user or hosted.
 
 **2026-09-14 · A fake search client is a first-class citizen.** Tests, dry runs and demos never spend credits.
+
+**2026-09-14 · Price points as the tracked series; baseline = median of the best price per check.** Raw observations
+mix cheap and expensive shops, so their median made mediocre prices look like deals. One aggregate row per item per
+run (min/avg/median/max, per unit, best offer) is what a person means by "the price that week"; the median of its
+best price over 90 days is the honest "normal" price. Raw observations stay for auditing and per-shop stats.
+
+**2026-09-14 · Direct sources run for every active item, every run, and never count as an LLM check.** Folder/API
+sources are free, so denser tracking costs nothing; the LLM stays on its priority-driven cadence. Offers carry a
+`source` column so LLM and structured data can be compared later.
+
+**2026-09-14 · Charts are server-rendered SVG with a tiny hover script, no chart library.** Keeps the app offline-
+capable and dependency-free; the design follows the data-viz method (validated two-colour pair, sparse labels,
+legend, table fallback).

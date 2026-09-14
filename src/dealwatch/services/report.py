@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import markdown as md
@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from ..models import Item, Observation, Run, RunItem
 from ..settings import Settings
+from .insights import ItemInsight, item_insight
 from .planner import RunPlan
 
 _LINK_TEXT_BAD = re.compile(r"[\[\]\n\r]")
@@ -82,6 +83,56 @@ def _baseline_line(obs: Observation, currency: str) -> str:
     return f"baseline {money(obs.baseline_price, currency)} {basis}"
 
 
+def _history_line(insight: ItemInsight, run_id: int, currency: str) -> str | None:
+    """'lowest seen ... · 30-day avg ... · N checks since ...' from checks *before* this run."""
+    prior = [p for p in insight.points if p.run_id != run_id]
+    if not prior:
+        return None
+    low = min(prior, key=lambda p: p.best)
+    suffix = insight.unit_label
+    parts = [f"lowest seen {money(low.best, currency)}{suffix} on {low.at.strftime('%d %b')} at {safe(low.domain)}"]
+    recent = [p.best for p in prior if p.at >= insight.last.at - timedelta(days=30)] if insight.last else []
+    if recent:
+        parts.append(f"30-day avg {money(sum(recent) / len(recent), currency)}{suffix}")
+    parts.append(f"{len(prior)} earlier check(s) since {prior[0].at.strftime('%d %b %Y')}")
+    return " · ".join(parts)
+
+
+def _tracker_section(insights: dict[int, ItemInsight], items: dict[int, Item], run: Run, settings: Settings) -> list[str]:
+    lines: list[str] = []
+    current = [i for i in insights.values() if i.last and i.last.run_id == run.id]
+    if not current:
+        return lines
+    with_history = [i for i in current if i.prev is not None]
+    lines.append("## 📈 Price tracker")
+    lines.append("")
+    if not with_history:
+        lines.append(f"Price history starts with this run: {len(current)} item(s) now have their first price point.")
+        lines.append("")
+        return lines
+    threshold = max(3.0, settings.min_discount_pct / 2)
+    down = sorted([i for i in with_history if i.change_vs_prev_pct is not None and i.change_vs_prev_pct <= -threshold], key=lambda i: i.change_vs_prev_pct)[:6]
+    up = sorted([i for i in with_history if i.change_vs_prev_pct is not None and i.change_vs_prev_pct >= threshold], key=lambda i: -i.change_vs_prev_pct)[:6]
+    currency = settings.currency
+    for label, movers in (("Cheaper than last check", down), ("More expensive than last check", up)):
+        if movers:
+            lines.append(f"**{label}:**")
+            for i in movers:
+                lines.append(
+                    f"- {safe(i.item.display_name)}: {money(i.prev.best, currency)} → **{money(i.last.best, currency)}**{i.unit_label} "
+                    f"({i.change_vs_prev_pct:+.0f}%) at {safe(i.last.domain)}"
+                )
+            lines.append("")
+    lows = [i for i in with_history if i.is_new_low]
+    if lows:
+        lines.append("**New all-time low:** " + ", ".join(f"{safe(i.item.display_name)} ({money(i.last.best, currency)}{i.unit_label})" for i in lows))
+        lines.append("")
+    stable = len(with_history) - len(down) - len(up)
+    lines.append(f"_{len(with_history)} item(s) compared with their previous check; {stable} unchanged within ±{threshold:.0f}%. See the Tracker page for charts and per-shop stats._")
+    lines.append("")
+    return lines
+
+
 def build_report(session: Session, run: Run, plan: RunPlan | None, settings: Settings) -> str:
     currency = settings.currency
     lines: list[str] = []
@@ -113,6 +164,7 @@ def build_report(session: Session, run: Run, plan: RunPlan | None, settings: Set
     for obs in observations:
         bucket = deals_by_item if obs.is_deal else others_by_item
         bucket.setdefault(obs.item_id, []).append(obs)
+    insights = {item_id: item_insight(session, items[item_id], now=run.started_at) for item_id in {o.item_id for o in observations} if item_id in items}
 
     # ---- deals -------------------------------------------------------------------------------
     lines.append(f"## 🔥 Deals worth a look ({len(deals_by_item)})")
@@ -129,6 +181,9 @@ def build_report(session: Session, run: Run, plan: RunPlan | None, settings: Set
         lines.append(f"### {rank}. {safe(item.display_name)} - {money(best.price, currency)} at {safe(best.retailer_domain)}")
         lines.append(f"- {_offer_line(best, item, currency)}")
         lines.append(f"- Why: {safe(best.reasons) or 'meets your criteria'} · {_baseline_line(best, currency)}")
+        history = _history_line(insights[item_id], run.id, currency) if item_id in insights else None
+        if history:
+            lines.append(f"- History: {history}")
         lines.append(f"- {link(best.title, best.url)}")
         if best.evidence:
             lines.append(f"- _{safe(best.evidence)}_")
@@ -140,13 +195,15 @@ def build_report(session: Session, run: Run, plan: RunPlan | None, settings: Set
             lines.append(f"- Note: a non-promo listing is cheaper per unit: {_offer_line(o, item, currency)} - {link('link', o.url)}")
         lines.append("")
 
+    lines.extend(_tracker_section(insights, items, run, settings))
+
     # ---- other findings --------------------------------------------------------------------
     found_no_deal = {k: v for k, v in others_by_item.items() if k not in deals_by_item}
     lines.append(f"## 📋 Checked, no deal ({len(found_no_deal)})")
     lines.append("")
     if found_no_deal:
-        lines.append("| Item | Best price seen | Per unit | Shop | vs baseline |")
-        lines.append("|---|---|---|---|---|")
+        lines.append("| Item | Best price seen | Per unit | Shop | vs baseline | Lowest ever |")
+        lines.append("|---|---|---|---|---|---|")
         for item_id, offers in sorted(found_no_deal.items(), key=lambda kv: items.get(kv[0]).display_name if items.get(kv[0]) else ""):
             item = items.get(item_id)
             if item is None:
@@ -154,8 +211,10 @@ def build_report(session: Session, run: Run, plan: RunPlan | None, settings: Set
             best = min(offers, key=lambda o: o.comparable_price)
             vs = f"{best.discount_pct:+.0f}%" if best.discount_pct is not None else "n/a"
             per_unit = f"{money(best.unit_price, currency)}/{best.unit}" if best.unit_price is not None else "-"
+            ins = insights.get(item_id)
+            lowest = f"{money(ins.low, currency)}{ins.unit_label} ({ins.low_at.strftime('%d %b')})" if ins and ins.low is not None and ins.n_points > 1 else "-"
             lines.append(
-                f"| {safe(item.display_name)} | {money(best.price, currency)} | {per_unit} | {link(best.retailer_domain, best.url)} | {vs} |"
+                f"| {safe(item.display_name)} | {money(best.price, currency)} | {per_unit} | {link(best.retailer_domain, best.url)} | {vs} | {lowest} |"
             )
     else:
         lines.append("_-_")

@@ -159,6 +159,12 @@ def _to_planned_item(item: Item, baseline: Baseline) -> PlannedItem:
     )
 
 
+def active_item_views(session: Session, now: datetime) -> list[PlannedItem]:
+    """Light-weight views of every active, non-snoozed item (what direct deal sources receive each run)."""
+    items = session.scalars(select(Item).where(Item.active.is_(True)).order_by(Item.id))
+    return [_to_planned_item(i, Baseline()) for i in items if not (i.snooze_until and i.snooze_until > now)]
+
+
 def build_plan(session: Session, settings: Settings, *, now: datetime, force: bool = False) -> RunPlan:
     plan = RunPlan()
     items = list(session.scalars(select(Item).where(Item.active.is_(True)).order_by(Item.id)))

@@ -39,9 +39,14 @@ You decide what to buy. Dealwatch never orders anything.
 4. **Assess** - each offer is compared with the item's baseline (median of the last 90 days), the shop's own regular
    price, and your target prices. A deal needs ≥ the threshold discount (default 10%) or a target hit; low-confidence
    offers are never called deals.
-5. **Report** - markdown + HTML report: deals ranked first, then "checked, no deal", not found, errors, deferred items.
+5. **Track** - every run writes one *price point* per item found: min / average / median / max price across the offers,
+   the same per unit, and the best offer (shop, URL, pack). This is the time series behind baselines, the Tracker page
+   and the exports.
+6. **Report** - markdown + HTML report: deals ranked first (with price history: lowest ever, 30-day average), a price
+   tracker section (cheaper/dearer than last check, new all-time lows), then "checked, no deal", not found, errors.
    Saved in the DB and as `data/reports/run-NNNN.md`; optionally e-mailed or sent to Telegram.
-6. **Repeat** - on the schedule (default Monday & Thursday 07:00) while `dealwatch serve` runs, or via `dealwatch run` from cron.
+7. **Repeat** - on the schedule (default Monday & Thursday 07:00) while `dealwatch serve` runs, or via `dealwatch run` from cron.
+   Direct deal sources (supermarket folders/APIs, see roadmap) plug in next to the LLM search and run for every active item.
 
 Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · design choices: [docs/DECISIONS.md](docs/DECISIONS.md) ·
 what's next: [docs/ROADMAP.md](docs/ROADMAP.md) · running it as a service: [docs/OPERATIONS.md](docs/OPERATIONS.md).
@@ -79,8 +84,41 @@ personal care, empty = everything). *Search mode* in Settings switches between a
 Each run page shows the report, every offer seen, the search queries the model actually ran, discarded offers,
 errors, and token/search usage with the estimated cost.
 
+**Tracker** - the price history since each item was added. Per item: best price at the last check, change versus the
+previous check, 30-day average, lowest ever (when, where), trend over the last checks, volatility, the shop that is
+cheapest most often, and how often a promotion was seen. Each item page has a line chart (best price and average of
+offers per check), a per-shop breakdown and the full price-point table.
+
 **Settings** - model and effort, search mode, batch size and caps, deal threshold, baseline window, check intervals,
 locale, schedule (cron), notifications. Everything has inline help.
+
+## Your data (for analysis)
+
+Everything lives in one SQLite file, `data/dealwatch.db`. Tables worth querying:
+
+| Table | One row per | Notes |
+|---|---|---|
+| `observations` | offer seen | price, list price, pack quantity, unit, unit price, promo, confidence, evidence, URL, `source` (`llm_search` or an adapter name), plus the deal assessment |
+| `price_points` | item × run | `min/avg/median/max_price`, `min/avg/median/max_unit_price`, best offer (`best_price`, `best_unit_price`, `best_domain`, `best_url`), `promo_count`, `deal_count` |
+| `run_items` | item × run checked by the LLM | `found` / `not_found` / `error` with the model's note |
+| `runs` | run | usage, cost, status, plan and log JSON |
+
+CSV exports: `/export/price_points.csv`, `/export/observations.csv`, `/export/items.csv`, `/export/runs.csv`,
+`/items/{id}/price_points.csv`; JSON: `/api/items/{id}/prices`; CLI: `dealwatch export price_points --out pp.csv`.
+
+```python
+import duckdb  # or pandas.read_sql / sqlite3
+con = duckdb.connect()
+con.sql("ATTACH 'data/dealwatch.db' AS dw (TYPE sqlite)")
+con.sql("""
+  SELECT i.name, p.observed_at::date AS day, p.min_unit_price, p.avg_unit_price, p.best_domain
+  FROM dw.price_points p JOIN dw.items i ON i.id = p.item_id
+  ORDER BY i.name, day
+""").show()
+```
+
+Baselines are computed from price points: the median of the *best price per check* over the last 90 days, so the
+"normal" price is what you would actually have paid at the cheapest shop, not an average over expensive listings.
 
 ## Cost model
 
@@ -101,6 +139,8 @@ uv run dealwatch serve                 # web UI + scheduler
 uv run dealwatch run [--force] [--dry-run] [--fake]   # one run now (for cron); prints the report
 uv run dealwatch plan                  # what the next run would do and cost
 uv run dealwatch report [RUN_ID]       # print a report
+uv run dealwatch tracker               # per-item price tracker summary
+uv run dealwatch export price_points --out pp.csv   # items | retailers | runs | observations | price_points | run_items
 uv run dealwatch items list|add|remove|bought
 uv run dealwatch retailers list|add|status DOMAIN enabled|disabled|blocked
 uv run dealwatch settings show|set KEY VALUE
@@ -122,12 +162,14 @@ src/dealwatch/
     planner.py      due logic, grouping, budgets, cost estimate
     prompts.py      system prompt, JSON output schema, pydantic validation
     llm.py          Anthropic client (web search + structured output, pause_turn, usage) and the fake client
-    pricing.py      unit prices, baselines, deal assessment
+    pricing.py      unit prices, baselines (from price points), deal assessment, price-point aggregation
+    insights.py     per-item statistics, retailer breakdown, movers, overview (Tracker page / report)
+    sources/        direct deal source interface (+ fake) for supermarket folders / retailer APIs
     runner.py       run orchestration (parallel batches, persistence, status)
     report.py       markdown/HTML report
     notify.py       e-mail / Telegram
     scheduler.py    APScheduler cron job
-  web/              FastAPI app, Jinja templates, CSS
+  web/              FastAPI app, Jinja templates, CSS, charts.py (inline SVG) + static/tracker.js (hover layer)
 tests/              pytest suite (fake/stubbed LLM only)
 docs/               architecture, decisions, roadmap, operations
 deploy/             launchd example

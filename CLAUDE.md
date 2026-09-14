@@ -42,6 +42,11 @@ observation, and reports real deals versus each item's own price history. Read `
 | Report text | `services/report.py` |
 | Cron schedule | `services/scheduler.py`, setting `schedule_cron` |
 | Cost estimate and price table | `services/planner.py` (`estimate_plan`), `config.py` (`MODEL_PRICES`) |
+| Price points (the tracked series) | `services/runner.py` (`_record_price_points`), `services/pricing.py` (`summarize_offers`) |
+| Tracker stats, movers, per-shop breakdown | `services/insights.py` |
+| Direct deal sources (AH/Jumbo/Lidl adapters go here) | `services/sources/__init__.py` (`DealSource`, `SOURCES`, `FakeSource`), `runner._run_sources` |
+| Charts | `web/charts.py` (SVG), `web/static/tracker.js` (hover), `.viz` tokens in `style.css` |
+| CSV / JSON exports | `web/app.py` (`/export/{table}.csv`, `/api/items/{id}/prices`), `cli.py export` |
 | Web routes | `web/app.py` (single file, grouped by page) |
 
 ## Gotchas
@@ -55,3 +60,8 @@ observation, and reports real deals versus each item's own price history. Read `
 - Structured outputs plus server tools: the JSON is the final text block; `llm.final_text` picks the last text block
   containing `{` and `extract_json` tolerates fences/prose.
 - The planner's `DUE_SLACK` (12h) makes weekly items due slightly early so a fixed weekly schedule doesn't skip them.
+- Price points have `observed_at = run.started_at`; baselines use points strictly before the run, so a run never
+  compares against itself. Tests pass explicit `now=` values to simulate weeks passing.
+- A new source adapter must only return offers from its own domain (others are dropped) and runs only when that
+  retailer is `enabled` on the Retailers page. Keep adapters free of network calls at import time; test with fixtures.
+- Charts: keep to the two series colours (`--viz-s1/--viz-s2`) - adding a third series needs a re-validated palette.

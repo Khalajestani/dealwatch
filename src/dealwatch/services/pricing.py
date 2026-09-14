@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from statistics import median
+from statistics import mean, median
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..models import Item, Observation
+from ..models import Item, Observation, PricePoint
 from ..settings import Settings
 
 PRIORITY_BONUS = {"need": 10.0, "stock_up": 5.0, "wishlist": 0.0}
@@ -35,16 +35,28 @@ class Baseline:
             return "no history yet"
         kind = "per unit" if self.basis == "unit" else "per pack"
         if self.n < 3:
-            return f"last seen {self.value:.2f} {kind}"
-        return f"{self.n}-point median {self.value:.2f} {kind}"
+            return f"best price last seen {self.value:.2f} {kind}"
+        return f"median best price over {self.n} checks {self.value:.2f} {kind}"
 
 
 def baseline_for_item(session: Session, item_id: int, *, before: datetime, window_days: int) -> Baseline:
-    """Median of previous observations (strictly before `before`) inside the window.
+    """The item's 'normal' price: median of the best price seen per check (price points) inside the window,
+    strictly before `before` (so a run never compares against itself).
 
-    Uses per-unit prices when the history has them (fair across pack sizes), else pack prices.
+    Per-unit prices are used when the history has them (fair across pack sizes), else pack prices.
+    Falls back to raw observations when no price points exist yet (legacy data).
     """
     since = before - timedelta(days=window_days)
+    points = session.execute(
+        select(PricePoint.min_price, PricePoint.min_unit_price)
+        .where(PricePoint.item_id == item_id, PricePoint.observed_at >= since, PricePoint.observed_at < before)
+    ).all()
+    if points:
+        unit_values = [u for _, u in points if u is not None]
+        if unit_values:
+            return Baseline(value=round(median(unit_values), 4), basis="unit", n=len(unit_values), lowest=min(unit_values))
+        pack_values = [p for p, _ in points if p is not None]
+        return Baseline(value=round(median(pack_values), 4), basis="pack", n=len(pack_values), lowest=min(pack_values))
     rows = session.execute(
         select(Observation.price, Observation.unit_price)
         .where(Observation.item_id == item_id, Observation.observed_at >= since, Observation.observed_at < before)
@@ -132,3 +144,35 @@ def assess_offer(
     score *= 0.5 + 0.5 * max(0.0, min(1.0, confidence))
     result.score = round(score, 2)
     return result
+
+
+def summarize_offers(observations: list[Observation]) -> dict:
+    """Aggregate one run's offers for an item into the fields of a PricePoint (without ids)."""
+    if not observations:
+        raise ValueError("no observations to summarise")
+    prices = [o.price for o in observations]
+    unit_prices = [o.unit_price for o in observations if o.unit_price is not None]
+    best = min(observations, key=lambda o: (0, o.unit_price) if o.unit_price is not None else (1, o.price))
+    units = [o.unit for o in observations if o.unit]
+    return {
+        "n_offers": len(observations),
+        "n_retailers": len({o.retailer_domain for o in observations}),
+        "unit": max(set(units), key=units.count) if units else None,
+        "min_price": round(min(prices), 4),
+        "avg_price": round(mean(prices), 4),
+        "median_price": round(median(prices), 4),
+        "max_price": round(max(prices), 4),
+        "min_unit_price": round(min(unit_prices), 4) if unit_prices else None,
+        "avg_unit_price": round(mean(unit_prices), 4) if unit_prices else None,
+        "median_unit_price": round(median(unit_prices), 4) if unit_prices else None,
+        "max_unit_price": round(max(unit_prices), 4) if unit_prices else None,
+        "best_price": best.price,
+        "best_unit_price": best.unit_price,
+        "best_pack_quantity": best.pack_quantity,
+        "best_domain": best.retailer_domain,
+        "best_url": best.url,
+        "best_promo_type": best.promo_type or "none",
+        "promo_count": sum(1 for o in observations if o.promo_type and o.promo_type != "none"),
+        "deal_count": sum(1 for o in observations if o.is_deal),
+        "sources": ",".join(sorted({o.source or "llm_search" for o in observations})),
+    }

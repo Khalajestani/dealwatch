@@ -32,7 +32,48 @@
   <span class="muted small">last checked: {{ item.last_checked_at|localtime(tz) if item.last_checked_at else 'never' }}{% if item.last_bought_at %} · last bought: {{ item.last_bought_at|localtime(tz) }}{% endif %}</span>
 </div>
 
-<h2>Price history</h2>
+<h2>Price tracker</h2>
+{% if insight.n_points %}
+<div class="cards">
+  <div class="card"><div class="stat num">{{ insight.last.best|money(settings.currency) }}<span class="muted small">{{ insight.unit_label }}</span></div><div class="stat-label">best price, last check ({{ insight.last.at|localtime(tz) }}, {{ insight.last.domain }})</div></div>
+  <div class="card"><div class="stat num">{% if insight.change_vs_prev_pct is not none %}<span class="{{ 'delta-down' if insight.change_vs_prev_pct < 0 else ('delta-up' if insight.change_vs_prev_pct > 0 else '') }}">{{ '▼' if insight.change_vs_prev_pct < 0 else ('▲' if insight.change_vs_prev_pct > 0 else '=') }} {{ insight.change_vs_prev_pct|abs|round(0)|int }}%</span>{% else %}-{% endif %}</div><div class="stat-label">vs previous check{% if insight.prev %} ({{ insight.prev.best|money(settings.currency) }}){% endif %}</div></div>
+  <div class="card"><div class="stat num">{{ insight.low|money(settings.currency) }}</div><div class="stat-label">lowest ever · {{ insight.low_at|localtime(tz) }} · {{ insight.low_domain }}{% if insight.at_all_time_low %} · <span class="badge ok">now</span>{% endif %}</div></div>
+  <div class="card"><div class="stat num">{{ insight.avg_30d|money(settings.currency) if insight.avg_30d is not none else '-' }}</div><div class="stat-label">30-day average of best prices{% if insight.change_vs_30d_pct is not none %} ({{ '%+.0f'|format(insight.change_vs_30d_pct) }}% now){% endif %}</div></div>
+  <div class="card"><div class="stat" style="font-size:18px">{{ insight.trend }}{% if insight.trend_pct_per_check is not none %} <span class="muted small">{{ '%+.1f'|format(insight.trend_pct_per_check) }}%/check</span>{% endif %}</div><div class="stat-label">trend (last {{ [insight.n_points, 8]|min }} checks) · volatility {{ insight.volatility_pct if insight.volatility_pct is not none else '-' }}%</div></div>
+  <div class="card"><div class="stat" style="font-size:18px">{{ insight.best_domain or '-' }}</div><div class="stat-label">cheapest most often ({{ insight.best_domain_share_pct or 0 }}% of {{ insight.n_points }} checks) · promo seen {{ insight.promo_share_pct or 0 }}%</div></div>
+</div>
+{{ chart_html|safe }}
+<p class="small muted">Tracked since {{ insight.first_seen|localtime(tz) }} ({{ insight.days_tracked }} days, {{ insight.n_points }} checks) · <a href="/items/{{ item.id }}/price_points.csv">price points CSV</a> · <a href="/api/items/{{ item.id }}/prices">JSON</a></p>
+
+{% if breakdown %}
+<h3>By shop ({{ 'per ' + (item.unit or 'unit') if insight.basis == 'unit' else 'per pack' }})</h3>
+<table>
+  <tr><th>Shop</th><th>Offers seen</th><th>Lowest</th><th>Average</th><th>Last</th><th>Last seen</th><th>Cheapest in</th></tr>
+  {% for r in breakdown %}
+  <tr><td>{{ r.domain }}</td><td class="num">{{ r.n_offers }}</td><td class="num">{{ r.min_price|money(settings.currency) }}</td><td class="num">{{ r.avg_price|money(settings.currency) }}</td><td class="num">{{ r.last_price|money(settings.currency) }}</td><td class="small">{{ r.last_seen|localtime(tz) }}</td><td class="num">{{ r.wins }} check(s)</td></tr>
+  {% endfor %}
+</table>
+{% endif %}
+
+<h3>Price points (one per check)</h3>
+<table>
+  <tr><th>Check</th><th>Offers</th><th>Min</th><th>Avg</th><th>Median</th><th>Max</th>{% if insight.basis == 'unit' %}<th>Min /{{ item.unit }}</th><th>Avg /{{ item.unit }}</th><th>Median /{{ item.unit }}</th>{% endif %}<th>Best offer</th><th>Promo</th></tr>
+  {% for p in points %}
+  <tr>
+    <td class="small">{{ p.observed_at|localtime(tz) }} <a href="/runs/{{ p.run_id }}" class="muted">#{{ p.run_id }}</a></td>
+    <td class="num">{{ p.n_offers }} <span class="muted small">({{ p.n_retailers }} shops)</span></td>
+    <td class="num">{{ p.min_price|money(settings.currency) }}</td><td class="num">{{ p.avg_price|money(settings.currency) }}</td><td class="num">{{ p.median_price|money(settings.currency) }}</td><td class="num">{{ p.max_price|money(settings.currency) }}</td>
+    {% if insight.basis == 'unit' %}<td class="num">{{ p.min_unit_price|money(settings.currency) if p.min_unit_price is not none else '-' }}</td><td class="num">{{ p.avg_unit_price|money(settings.currency) if p.avg_unit_price is not none else '-' }}</td><td class="num">{{ p.median_unit_price|money(settings.currency) if p.median_unit_price is not none else '-' }}</td>{% endif %}
+    <td class="small"><a href="{{ p.best_url }}" target="_blank" rel="noopener">{{ p.best_domain }}</a> {{ p.best_price|money(settings.currency) }}{% if p.best_pack_quantity %} ({{ p.best_pack_quantity|round(2) }} {{ p.unit }}){% endif %} · {{ p.sources }}</td>
+    <td class="small">{{ p.promo_count }}/{{ p.n_offers }}{% if p.best_promo_type != 'none' %} · best: {{ p.best_promo_type }}{% endif %}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="muted">No price points yet - the tracker starts with the first run that finds this item.</p>
+{% endif %}
+
+<h2>All offers seen</h2>
 {% if history %}
 <table>
   <tr><th>Seen</th><th>Shop</th><th>Price</th><th>Per unit</th><th>Promo</th><th>vs baseline</th><th>Conf.</th><th>Listing</th></tr>

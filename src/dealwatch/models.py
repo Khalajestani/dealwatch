@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 
-from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -68,6 +68,7 @@ class Item(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
     observations: Mapped[list[Observation]] = relationship(back_populates="item", cascade="all, delete-orphan")
+    price_points: Mapped[list[PricePoint]] = relationship(back_populates="item", cascade="all, delete-orphan")
 
     @property
     def display_name(self) -> str:
@@ -127,6 +128,7 @@ class Run(Base):
     log_json: Mapped[str | None] = mapped_column(Text)  # queries, per-group errors, dropped offers
 
     observations: Mapped[list[Observation]] = relationship(back_populates="run", cascade="all, delete-orphan")
+    price_points: Mapped[list[PricePoint]] = relationship(back_populates="run", cascade="all, delete-orphan")
     run_items: Mapped[list[RunItem]] = relationship(back_populates="run", cascade="all, delete-orphan")
     report: Mapped[Report | None] = relationship(back_populates="run", uselist=False, cascade="all, delete-orphan")
 
@@ -176,6 +178,7 @@ class Observation(Base):
     valid_until: Mapped[date | None] = mapped_column(Date)
     confidence: Mapped[float] = mapped_column(Float, default=0.5)
     evidence: Mapped[str | None] = mapped_column(Text)
+    source: Mapped[str] = mapped_column(String(30), default="llm_search")  # llm_search | <deal source adapter name>
     observed_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
     # analysis (filled after the run's searches complete)
     baseline_price: Mapped[float | None] = mapped_column(Float)
@@ -194,6 +197,48 @@ class Observation(Base):
     def comparable_price(self) -> float:
         """Price used for comparisons: per unit when known, else the pack price."""
         return self.unit_price if self.unit_price is not None else self.price
+
+
+class PricePoint(Base):
+    """One row per (item, run) with offers: the tracked time series (min / avg / median / max, pack and per unit)."""
+
+    __tablename__ = "price_points"
+    __table_args__ = (UniqueConstraint("item_id", "run_id", name="uq_price_point_item_run"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    item_id: Mapped[int] = mapped_column(ForeignKey("items.id", ondelete="CASCADE"), index=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("runs.id", ondelete="CASCADE"), index=True)
+    observed_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+    n_offers: Mapped[int] = mapped_column(Integer, default=0)
+    n_retailers: Mapped[int] = mapped_column(Integer, default=0)
+    unit: Mapped[str | None] = mapped_column(String(20))
+    # pack-level prices across all offers of the run
+    min_price: Mapped[float] = mapped_column(Float)
+    avg_price: Mapped[float] = mapped_column(Float)
+    median_price: Mapped[float] = mapped_column(Float)
+    max_price: Mapped[float] = mapped_column(Float)
+    # per-unit prices (only offers with a known pack size)
+    min_unit_price: Mapped[float | None] = mapped_column(Float)
+    avg_unit_price: Mapped[float | None] = mapped_column(Float)
+    median_unit_price: Mapped[float | None] = mapped_column(Float)
+    max_unit_price: Mapped[float | None] = mapped_column(Float)
+    # the single best offer (lowest per-unit price when known, else lowest pack price)
+    best_price: Mapped[float] = mapped_column(Float)
+    best_unit_price: Mapped[float | None] = mapped_column(Float)
+    best_pack_quantity: Mapped[float | None] = mapped_column(Float)
+    best_domain: Mapped[str] = mapped_column(String(200))
+    best_url: Mapped[str] = mapped_column(Text)
+    best_promo_type: Mapped[str] = mapped_column(String(20), default="none")
+    promo_count: Mapped[int] = mapped_column(Integer, default=0)
+    deal_count: Mapped[int] = mapped_column(Integer, default=0)
+    sources: Mapped[str] = mapped_column(String(200), default="llm_search")  # comma-separated
+
+    item: Mapped[Item] = relationship(back_populates="price_points")
+    run: Mapped[Run] = relationship(back_populates="price_points")
+
+    @property
+    def comparable_min(self) -> float:
+        return self.min_unit_price if self.min_unit_price is not None else self.min_price
 
 
 class Report(Base):
