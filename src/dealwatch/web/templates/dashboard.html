@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Dashboard</h1>
+<div class="cards">
+  <div class="card"><div class="stat">{{ active_count }}</div><div class="stat-label">active items ({{ item_count }} total)</div></div>
+  <div class="card"><div class="stat">{{ due_count }}</div><div class="stat-label">due for a check</div></div>
+  <div class="card"><div class="stat">{{ enabled_retailers }}</div><div class="stat-label">enabled retailers</div></div>
+  <div class="card"><div class="stat">${{ '%.2f'|format(spent_30d) }}</div><div class="stat-label">est. spent, last 30 days ({{ runs_30d }} runs)</div></div>
+  <div class="card"><div class="stat small" style="font-size:16px">{{ next_run.strftime('%a %d %b %H:%M') if next_run else 'off' }}</div><div class="stat-label">next scheduled run</div></div>
+</div>
+
+<div class="card">
+  <div class="actions">
+    <form method="post" action="/runs/start">
+      <label class="inline"><input type="checkbox" name="force" value="1"> include items that are not due yet</label>
+      <button class="primary" type="submit" {% if run_active or not api_ready %}disabled{% endif %}>Run now</button>
+    </form>
+    <form method="post" action="/runs/plan"><button type="submit">Dry run (show plan &amp; cost estimate)</button></form>
+    {% if item_count == 0 %}<form method="post" action="/seed-samples"><button type="submit">Add sample items</button></form>{% endif %}
+  </div>
+  {% if not api_ready %}<p class="muted small">No Anthropic credentials detected - real runs are disabled. Copy <code>.env.example</code> to <code>.env</code>, set <code>ANTHROPIC_API_KEY</code>, restart.</p>{% endif %}
+</div>
+
+<h2>Latest deals {% if last_complete %}<span class="muted small">from run #{{ last_complete.id }}, {{ last_complete.started_at|localtime(tz) }}</span>{% endif %}</h2>
+{% if deals %}
+<table>
+  <tr><th>#</th><th>Item</th><th>Price</th><th>Per unit</th><th>Shop</th><th>Why</th><th></th></tr>
+  {% for obs, item in deals %}
+  <tr class="deal">
+    <td>{{ loop.index }}</td>
+    <td><a href="/items/{{ item.id }}">{{ item.display_name }}</a></td>
+    <td><strong>{{ obs.price|money(obs.currency) }}</strong>{% if obs.list_price %} <span class="muted small">reg. {{ obs.list_price|money(obs.currency) }}</span>{% endif %}</td>
+    <td>{% if obs.unit_price is not none %}{{ obs.unit_price|money(obs.currency) }}/{{ obs.unit }}{% else %}-{% endif %}</td>
+    <td>{{ obs.retailer_domain }}</td>
+    <td class="small">{{ obs.reasons or '' }}{% if obs.promo_text %} · {{ obs.promo_text }}{% endif %}{% if obs.valid_until %} · until {{ obs.valid_until }}{% endif %}</td>
+    <td><a href="{{ obs.url }}" target="_blank" rel="noopener">open ↗</a></td>
+  </tr>
+  {% endfor %}
+</table>
+{% elif last_complete %}
+<p class="muted">The last run found nothing above your deal threshold. <a href="/runs/{{ last_complete.id }}">See the full report.</a></p>
+{% else %}
+<p class="muted">No completed runs yet. Add items, check the retailers list, then press <em>Run now</em> (or <em>Dry run</em> first to see the cost estimate).</p>
+{% endif %}
+
+{% if last_run %}
+<h2>Last run</h2>
+<div class="card">
+  <span class="badge {{ last_run.status }}">{{ last_run.status }}</span>
+  run <a href="/runs/{{ last_run.id }}">#{{ last_run.id }}</a> · {{ last_run.started_at|localtime(tz) }} · {{ last_run.trigger }} ·
+  {{ last_run.items_checked }} items checked · {{ last_run.deal_count }} deals · {{ last_run.web_searches }} searches · ${{ '%.3f'|format(last_run.cost_usd) }}
+  {% if last_run.error %}<div class="flash err" style="margin-top:8px">{{ last_run.error }}</div>{% endif %}
+</div>
+{% endif %}
+{% endblock %}

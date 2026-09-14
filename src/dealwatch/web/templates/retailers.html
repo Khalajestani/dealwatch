@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Retailers · Dealwatch{% endblock %}
+{% block content %}
+<h1>Retailers</h1>
+<p class="muted">Search mode is <strong>{{ settings.search_mode }}</strong>
+{% if settings.search_mode == 'allowlist' %}- the search engine only returns pages from <em>enabled</em> shops. <em>Disabled</em> = temporarily off, <em>blocked</em> = never use (and any offer from it is discarded).{% else %}- the whole web is searched except <em>blocked</em> shops; enabled shops are suggested to the model.{% endif %}
+Category tags limit which batches a shop is used for (empty = all categories). Change the mode in <a href="/settings">Settings</a>.</p>
+
+<details class="card">
+  <summary>Add a shop</summary>
+  <form method="post" action="/retailers" class="grid" style="margin-top:10px">
+    <div><label>Name</label><input type="text" name="name" placeholder="Blokker"></div>
+    <div><label>Domain *</label><input type="text" name="domain" required placeholder="blokker.nl"></div>
+    <div><label>Status</label><select name="status">{% for s in statuses %}<option value="{{ s }}">{{ s }}</option>{% endfor %}</select></div>
+    <div class="wide"><label>Categories (comma separated, blank = all): {{ categories|map(attribute=0)|join(', ') }}</label><input type="text" name="categories" placeholder="household,tools_diy"></div>
+    <div class="wide"><label>Notes</label><input type="text" name="notes"></div>
+    <div><button class="primary" type="submit">Add</button></div>
+  </form>
+</details>
+
+<table>
+  <tr><th>Shop</th><th>Status</th><th>Categories</th><th>Notes</th><th style="width:330px">Actions</th></tr>
+  {% for r in retailers %}
+  <tr class="{{ 'inactive' if r.status != 'enabled' else '' }}">
+    <td><strong>{{ r.name }}</strong><div class="muted small">{{ r.domain }}</div></td>
+    <td><span class="badge {{ r.status }}">{{ r.status }}</span></td>
+    <td><div class="chips">{% for c in r.category_list %}<span>{{ c }}</span>{% else %}<span class="muted small">all</span>{% endfor %}</div></td>
+    <td class="small">{{ r.notes or '' }}</td>
+    <td>
+      <div class="actions">
+        {% for s in statuses if s != r.status %}
+        <form method="post" action="/retailers/{{ r.id }}"><input type="hidden" name="action" value="{{ s }}"><button class="small" type="submit">{{ s }}</button></form>
+        {% endfor %}
+        <form method="post" action="/retailers/{{ r.id }}" onsubmit="return confirm('Remove {{ r.domain }}?')"><input type="hidden" name="action" value="delete"><button class="small danger" type="submit">remove</button></form>
+      </div>
+      <details><summary class="small">edit</summary>
+        <form method="post" action="/retailers/{{ r.id }}" class="grid" style="margin-top:6px">
+          <input type="hidden" name="action" value="save">
+          <div><label>Name</label><input type="text" name="name" value="{{ r.name }}"></div>
+          <div><label>Sort order</label><input type="text" name="sort_order" value="{{ r.sort_order }}"></div>
+          <div class="wide"><label>Categories</label><input type="text" name="categories" value="{{ r.categories or '' }}"></div>
+          <div class="wide"><label>Notes</label><input type="text" name="notes" value="{{ r.notes or '' }}"></div>
+          <div><button class="small primary" type="submit">Save</button></div>
+        </form>
+      </details>
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+{% endblock %}

@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Dealwatch{% endblock %}</title>
+<link rel="stylesheet" href="{{ url_for('static', path='style.css') }}">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/">🛒 Dealwatch</a>
+  <nav>
+    <a href="/" class="{{ 'active' if nav == 'dashboard' else '' }}">Dashboard</a>
+    <a href="/items" class="{{ 'active' if nav == 'items' else '' }}">Items</a>
+    <a href="/retailers" class="{{ 'active' if nav == 'retailers' else '' }}">Retailers</a>
+    <a href="/runs" class="{{ 'active' if nav == 'runs' else '' }}">Runs</a>
+    <a href="/settings" class="{{ 'active' if nav == 'settings' else '' }}">Settings</a>
+  </nav>
+  <div class="status">
+    {% if run_active %}<span class="badge running">run in progress</span>{% endif %}
+    {% if fake %}<span class="badge warn" title="DEALWATCH_FAKE_LLM=1: no credits are spent, prices are made up">fake LLM</span>
+    {% elif not api_ready %}<span class="badge danger" title="Put ANTHROPIC_API_KEY in .env and restart">no API key</span>{% endif %}
+  </div>
+</header>
+<main>
+  {% if msg %}<div class="flash ok">{{ msg }}</div>{% endif %}
+  {% if err %}<div class="flash err">{{ err }}</div>{% endif %}
+  {% block content %}{% endblock %}
+</main>
+<footer>Dealwatch · runs locally · <a href="/api/health">health</a></footer>
+</body>
+</html>

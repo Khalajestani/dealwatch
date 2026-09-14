@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Runs · Dealwatch{% endblock %}
+{% block content %}
+<h1>Runs</h1>
+<div class="card actions">
+  <form method="post" action="/runs/start">
+    <label class="inline"><input type="checkbox" name="force" value="1"> include items that are not due yet</label>
+    <button class="primary" type="submit" {% if run_active or not api_ready %}disabled{% endif %}>Run now</button>
+  </form>
+  <form method="post" action="/runs/plan"><button type="submit">Dry run (plan &amp; estimate only)</button></form>
+  {% if run_active %}<span class="badge running">a run is in progress - refresh in a bit</span>{% endif %}
+</div>
+{% if runs %}
+<table>
+  <tr><th>#</th><th>Started</th><th>Trigger</th><th>Status</th><th>Items</th><th>Deals</th><th>Batches</th><th>Searches</th><th>Tokens in/out</th><th>Cost (est.)</th><th>Took</th></tr>
+  {% for run in runs %}
+  <tr>
+    <td><a href="/runs/{{ run.id }}">#{{ run.id }}</a></td>
+    <td class="small">{{ run.started_at|localtime(tz) }}</td>
+    <td>{{ run.trigger }}{% if run.dry_run %} <span class="badge">dry run</span>{% endif %}</td>
+    <td><span class="badge {{ run.status }}">{{ run.status }}</span></td>
+    <td>{{ run.items_checked }}/{{ run.items_planned }}</td>
+    <td>{% if run.deal_count %}<strong>{{ run.deal_count }}</strong>{% else %}0{% endif %}</td>
+    <td>{{ run.groups_completed }}/{{ run.groups_planned }}{% if run.groups_failed %} <span class="badge danger">{{ run.groups_failed }} failed</span>{% endif %}</td>
+    <td>{{ run.web_searches }}</td>
+    <td class="small">{{ run.input_tokens }}/{{ run.output_tokens }}</td>
+    <td>{% if run.dry_run %}~${{ '%.2f'|format(run.estimated_cost_usd or 0) }}{% else %}${{ '%.3f'|format(run.cost_usd) }}{% endif %}</td>
+    <td class="small">{% if run.duration_seconds is not none %}{{ run.duration_seconds|round|int }}s{% else %}running{% endif %}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="muted">No runs yet.</p>
+{% endif %}
+{% endblock %}

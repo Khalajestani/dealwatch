@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}{{ item.display_name }} · Dealwatch{% endblock %}
+{% block content %}
+<p><a href="/items">← Items</a></p>
+<h1>{{ item.display_name }}
+  {% if not item.active %}<span class="badge">paused</span>{% elif item.snooze_until %}<span class="badge warn">snoozed until {{ item.snooze_until|localtime(tz) }}</span>{% elif due %}<span class="badge ok">due</span>{% endif %}
+</h1>
+
+<div class="card">
+  <form method="post" action="/items/{{ item.id }}" class="grid">
+    <div><label>Name *</label><input type="text" name="name" value="{{ item.name }}" required></div>
+    <div><label>Brand</label><input type="text" name="brand" value="{{ item.brand or '' }}"></div>
+    <div><label>Category</label><select name="category">{% for key, label in categories %}<option value="{{ key }}" {% if key == item.category %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+    <div><label>Priority</label><select name="priority">{% for key, label in priorities %}<option value="{{ key }}" {% if key == item.priority %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+    <div class="wide"><label>Search hints</label><input type="text" name="search_hints" value="{{ item.search_hints or '' }}"></div>
+    <div><label>Unit</label><select name="unit"><option value="">(none)</option>{% for u in units %}<option value="{{ u }}" {% if u == item.unit %}selected{% endif %}>{{ u }}</option>{% endfor %}</select></div>
+    <div><label>Target price</label><input type="text" name="target_price" value="{{ item.target_price if item.target_price is not none else '' }}"></div>
+    <div><label>Target price per unit</label><input type="text" name="target_unit_price" value="{{ item.target_unit_price if item.target_unit_price is not none else '' }}"></div>
+    <div><label>Check interval (days)</label><input type="text" name="check_interval_days" value="{{ item.check_interval_days or '' }}"><div class="help">blank = {{ settings.interval_for(item.priority) }} days for priority '{{ item.priority }}'</div></div>
+    <div><label class="inline"><input type="checkbox" name="bulk_ok" value="1" {% if item.bulk_ok %}checked{% endif %}> household bulk packs are fine</label></div>
+    <div class="wide"><label>Notes</label><input type="text" name="notes" value="{{ item.notes or '' }}"></div>
+    <div><button class="primary" type="submit">Save</button></div>
+  </form>
+</div>
+
+<div class="card actions">
+  <form method="post" action="/items/{{ item.id }}/action"><input type="hidden" name="action" value="bought"><button type="submit">✅ Bought it (snooze {{ settings.bought_snooze_days }} days)</button></form>
+  {% if item.snooze_until %}<form method="post" action="/items/{{ item.id }}/action"><input type="hidden" name="action" value="unsnooze"><button type="submit">Remove snooze</button></form>{% endif %}
+  <form method="post" action="/items/{{ item.id }}/action"><input type="hidden" name="action" value="check_next"><button type="submit">Check in next run</button></form>
+  <form method="post" action="/items/{{ item.id }}/action"><input type="hidden" name="action" value="toggle"><button type="submit">{{ 'Pause checks' if item.active else 'Re-activate' }}</button></form>
+  <form method="post" action="/items/{{ item.id }}/action" onsubmit="return confirm('Delete this item and its price history?')"><input type="hidden" name="action" value="delete"><button class="danger" type="submit">Delete</button></form>
+  <span class="muted small">last checked: {{ item.last_checked_at|localtime(tz) if item.last_checked_at else 'never' }}{% if item.last_bought_at %} · last bought: {{ item.last_bought_at|localtime(tz) }}{% endif %}</span>
+</div>
+
+<h2>Price history</h2>
+{% if history %}
+<table>
+  <tr><th>Seen</th><th>Shop</th><th>Price</th><th>Per unit</th><th>Promo</th><th>vs baseline</th><th>Conf.</th><th>Listing</th></tr>
+  {% for obs in history %}
+  <tr class="{{ 'deal' if obs.is_deal else '' }}">
+    <td class="small">{{ obs.observed_at|localtime(tz) }} <a href="/runs/{{ obs.run_id }}" class="muted">#{{ obs.run_id }}</a></td>
+    <td>{{ obs.retailer_domain }}</td>
+    <td>{{ obs.price|money(obs.currency) }}{% if obs.list_price %} <span class="muted small">reg. {{ obs.list_price|money(obs.currency) }}</span>{% endif %}</td>
+    <td>{% if obs.unit_price is not none %}{{ obs.unit_price|money(obs.currency) }}/{{ obs.unit }} <span class="muted small">({{ obs.pack_quantity|round(2) }} {{ obs.unit }})</span>{% else %}-{% endif %}</td>
+    <td class="small">{% if obs.promo_type != 'none' %}{{ obs.promo_type }}{% if obs.promo_text %}: {{ obs.promo_text }}{% endif %}{% if obs.valid_until %} (until {{ obs.valid_until }}){% endif %}{% endif %}</td>
+    <td class="small">{{ obs.discount_pct|pct }}{% if obs.is_deal %} <span class="badge deal">deal</span>{% endif %}</td>
+    <td class="small">{{ (obs.confidence * 100)|round|int }}%</td>
+    <td class="small"><a href="{{ obs.url }}" target="_blank" rel="noopener">{{ obs.title[:70] }}</a>{% if obs.evidence %}<div class="muted">{{ obs.evidence[:160] }}</div>{% endif %}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="muted">No prices recorded yet.</p>
+{% endif %}
+
+{% if checks %}
+<h2>Recent checks</h2>
+<table>
+  <tr><th>Run</th><th>Status</th><th>Note</th></tr>
+  {% for c in checks %}<tr><td><a href="/runs/{{ c.run_id }}">#{{ c.run_id }}</a></td><td><span class="badge {{ 'ok' if c.status == 'found' else ('danger' if c.status == 'error' else '') }}">{{ c.status }}</span></td><td class="small">{{ c.note or '' }}</td></tr>{% endfor %}
+</table>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Items · Dealwatch{% endblock %}
+{% block content %}
+<h1>Shopping &amp; wish list</h1>
+
+<details class="card" {% if not items %}open{% endif %}>
+  <summary>Add an item</summary>
+  <form method="post" action="/items" class="grid" style="margin-top:10px">
+    <div><label>Name *</label><input type="text" name="name" required placeholder="Kitchen towels"></div>
+    <div><label>Brand</label><input type="text" name="brand" placeholder="Page"></div>
+    <div><label>Category</label><select name="category">{% for key, label in categories %}<option value="{{ key }}">{{ label }}</option>{% endfor %}</select></div>
+    <div><label>Priority</label><select name="priority">{% for key, label in priorities %}<option value="{{ key }}" {% if key == 'stock_up' %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+    <div class="wide"><label>Search hints (pack size, variant, model number - Dutch works best)</label><input type="text" name="search_hints" placeholder="keukenpapier, 8 rollen, XXL"></div>
+    <div><label>Unit for price comparison</label><select name="unit"><option value="">(none)</option>{% for u in units %}<option value="{{ u }}">{{ u }}</option>{% endfor %}</select><div class="help">e.g. roll, tablet, wash, ml - lets bulk packs compare fairly</div></div>
+    <div><label>Target price (per pack/product)</label><input type="text" name="target_price" placeholder="e.g. 4.50"></div>
+    <div><label>Target price per unit</label><input type="text" name="target_unit_price" placeholder="e.g. 0.60"></div>
+    <div><label>Check interval (days, blank = by priority)</label><input type="text" name="check_interval_days"></div>
+    <div><label class="inline"><input type="checkbox" name="bulk_ok" value="1" checked> household bulk packs are fine</label></div>
+    <div class="wide"><label>Notes</label><input type="text" name="notes"></div>
+    <div><button class="primary" type="submit">Add item</button></div>
+  </form>
+</details>
+
+{% if items %}
+<table>
+  <tr><th>Item</th><th>Category</th><th>Priority</th><th>Targets</th><th>Last best price</th><th>Last checked</th><th>Status</th></tr>
+  {% for item in items %}
+  {% set b = best.get(item.id) %}
+  <tr class="{{ '' if item.active else 'inactive' }}">
+    <td><a href="/items/{{ item.id }}">{{ item.display_name }}</a>{% if item.search_hints %}<div class="muted small">{{ item.search_hints }}</div>{% endif %}</td>
+    <td>{{ item.category }}</td>
+    <td><span class="badge">{{ item.priority }}</span></td>
+    <td class="small">{% if item.target_price %}≤ {{ item.target_price|money(settings.currency) }}{% endif %}{% if item.target_unit_price %} ≤ {{ item.target_unit_price|money(settings.currency) }}/{{ item.unit or 'unit' }}{% endif %}</td>
+    <td>{% if b %}{{ b.price|money(b.currency) }}{% if b.unit_price is not none %} <span class="muted small">({{ b.unit_price|money(b.currency) }}/{{ b.unit }})</span>{% endif %} <span class="muted small">{{ b.retailer_domain }}</span>{% if b.is_deal %} <span class="badge deal">deal</span>{% endif %}{% else %}<span class="muted">-</span>{% endif %}</td>
+    <td class="small">{{ item.last_checked_at|localtime(tz) if item.last_checked_at else 'never' }}</td>
+    <td>{% if not item.active %}<span class="badge">paused</span>{% elif item.snooze_until %}<span class="badge warn">snoozed</span>{% elif item.id in due_ids %}<span class="badge ok">due</span>{% else %}<span class="badge">waiting</span>{% endif %}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="muted">No items yet. Add your first one above or <form method="post" action="/seed-samples" style="display:inline"><button class="small" type="submit">add sample items</button></form> to see how it works.</p>
+{% endif %}
+{% endblock %}
