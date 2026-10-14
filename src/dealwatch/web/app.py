@@ -1,7 +1,8 @@
 """FastAPI web UI: server-rendered Jinja templates and plain HTML forms (no JS build step).
 
-`create_app()` wires DB, scheduler and the search client. Runs are started on a background thread so
-the UI stays responsive; the Runs page shows progress via the Run row that is written immediately.
+`create_app()` wires the database, the login, Claude and the scheduler. Run with
+`uvicorn dealwatch.web.app:create_app --factory`. Price checks run on a background thread so the UI stays
+responsive; the Runs page shows progress through the Run row, which is written at once.
 """
 
 from __future__ import annotations
@@ -14,52 +15,70 @@ import re
 import threading
 import uuid
 from contextlib import asynccontextmanager
-from datetime import timedelta
 from pathlib import Path
-from typing import Callable
+from typing import Annotated
 from urllib.parse import quote
 
 from fastapi import FastAPI, Form, HTTPException, Request
-from markupsafe import Markup
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import func, select
+from markupsafe import Markup
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session, sessionmaker
+from starlette.datastructures import UploadFile
 
-from ..config import MODEL_CHOICES, Env, load_env
+from .. import __version__, security
+from .. import items as item_store
+from ..config import Env
 from ..db import init_db, make_engine, make_session_factory
 from ..domains import is_valid_domain, normalize_domain
-from ..models import CATEGORIES, CATEGORY_ICON, CATEGORY_KEYS, CATEGORY_SHORT, PRIORITIES, PRIORITY_KEYS, RETAILER_STATUSES, UNITS, Item, Observation, PricePoint, Report, Retailer, Run, RunItem, utcnow
+from ..models import (
+    CATEGORIES,
+    CATEGORY_ICON,
+    CATEGORY_KEYS,
+    CATEGORY_SHORT,
+    PRIORITIES,
+    RETAILER_STATUSES,
+    UNITS,
+    Item,
+    Observation,
+    PricePoint,
+    Report,
+    Retailer,
+    Run,
+    RunItem,
+    utcnow,
+)
+from ..queries import deals_of, last_complete_run, latest_best_offers
 from ..seed import seed_retailers, seed_sample_items
-from ..services.extract import AnthropicExtractor, ExtractedItem, Extractor, FakeExtractor, prepare_image
+from ..services import ask, extract
+from ..services.claude import Claude, Unavailable
 from ..services.insights import all_item_insights, item_insight, overview, retailer_breakdown
-from ..services.llm import AnthropicSearchClient, FakeSearchClient, SearchClient
 from ..services.planner import is_due
 from ..services.report import local_time, money
 from ..services.runner import RunInProgress, execute_run, is_run_active
 from ..services.scheduler import RunScheduler
+from ..services.search import ClaudeSearchClient, SearchClient
 from ..services.similar import find_similar, normalize
 from ..settings import SPECS, get_settings, save_settings
 from .charts import Series, line_chart, sparkline
 
 log = logging.getLogger(__name__)
 BASE_DIR = Path(__file__).resolve().parent
-
-
-def _float_or_none(raw: str | None) -> float | None:
-    raw = (raw or "").strip().replace(",", ".")
-    if not raw:
-        return None
-    try:
-        return float(raw)
-    except ValueError as exc:
-        raise ValueError(f"'{raw}' is not a number") from exc
-
-
-def _int_or_none(raw: str | None) -> int | None:
-    value = _float_or_none(raw)
-    return int(value) if value is not None else None
+STATIC_DIR = BASE_DIR / "static"
+SHOWN_TURNS = 40  # on the Ask page; the model gets ask.HISTORY_TURNS of them
+NOT_CONNECTED = "Claude is not connected yet: see docs/assistant.md."
+_EXPORTS = {
+    "items": Item,
+    "retailers": Retailer,
+    "runs": Run,
+    "observations": Observation,
+    "price_points": PricePoint,
+    "run_items": RunItem,
+}
+_EXPORT_SKIP = {"runs": {"plan_json", "log_json"}}
 
 
 def create_app(
@@ -67,24 +86,34 @@ def create_app(
     *,
     session_factory: sessionmaker[Session] | None = None,
     search_client: SearchClient | None = None,
+    claude: Claude | None = None,
     start_scheduler: bool | None = None,
-    extractor: Extractor | None = None,
 ) -> FastAPI:
-    env = env or load_env()
+    env = env or Env()
+    logging.basicConfig(level=env.log_level.upper(), format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     if session_factory is None:
         engine = make_engine(env.db_path)
         init_db(engine)
         session_factory = make_session_factory(engine)
     with session_factory() as session:
         seed_retailers(session)
+        # A check cut off by a restart would otherwise show as running for ever.
+        session.execute(
+            update(Run)
+            .where(Run.status == "running")
+            .values(status="failed", error="interrupted by a restart", finished_at=utcnow())
+        )
+        session.commit()
+        timezone = get_settings(session).timezone
+    claude = claude or Claude(env.token, timezone)
 
-    def client_factory() -> SearchClient:
+    def client_factory() -> SearchClient | None:
         if search_client is not None:
             return search_client
-        return FakeSearchClient() if env.fake_llm else AnthropicSearchClient()
+        return ClaudeSearchClient(claude) if claude.enabled else None
 
     scheduler = RunScheduler(session_factory, client_factory, env)
-    use_scheduler = env.scheduler_enabled if start_scheduler is None else start_scheduler
+    use_scheduler = env.scheduler if start_scheduler is None else start_scheduler
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -93,13 +122,16 @@ def create_app(
         yield
         scheduler.shutdown()
 
-    app = FastAPI(title="Dealwatch", lifespan=lifespan, docs_url=None, redoc_url=None)
+    app = FastAPI(
+        title="Dealwatch", version=__version__, lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None
+    )
     app.state.env = env
     app.state.session_factory = session_factory
     app.state.scheduler = scheduler
-    app.state.client_factory = client_factory
-    app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
-    uploads_dir = env.data_dir / "uploads"
+    app.state.claude = claude
+    security.install(app, env)
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+    uploads_dir = env.uploads_dir
     uploads_dir.mkdir(parents=True, exist_ok=True)
     app.mount("/uploads", StaticFiles(directory=uploads_dir), name="uploads")
 
@@ -111,24 +143,22 @@ def create_app(
     templates.env.filters["localtime"] = local_time
     templates.env.filters["pct"] = lambda v: "-" if v is None else f"{v:+.0f}%"
     templates.env.globals.update(
-        categories=CATEGORIES, category_short=CATEGORY_SHORT, category_icon=CATEGORY_ICON, priorities=PRIORITIES, units=UNITS,
-        statuses=RETAILER_STATUSES, model_choices=MODEL_CHOICES, icon=icon,
+        categories=CATEGORIES,
+        category_short=CATEGORY_SHORT,
+        category_icon=CATEGORY_ICON,
+        priorities=PRIORITIES,
+        units=UNITS,
+        statuses=RETAILER_STATUSES,
+        icon=icon,
+        ask_models=ask.MODELS,
     )
 
-    api_ready = env.has_api_credentials or env.fake_llm or search_client is not None
-
-    def extractor_factory() -> Extractor | None:
-        if extractor is not None:
-            return extractor
-        if env.fake_llm:
-            return FakeExtractor()
-        return AnthropicExtractor() if env.has_api_credentials else None
-
-    extract_ready = extractor is not None or env.fake_llm or env.has_api_credentials
-
-    def render(request: Request, template: str, **context):
+    def settings_now():
         with session_factory() as session:
-            settings = get_settings(session)
+            return get_settings(session)
+
+    def render(request: Request, template: str, status_code: int = 200, **context) -> Response:
+        settings = context.pop("settings", None) or settings_now()
         context.update(
             request=request,
             settings=settings,
@@ -136,17 +166,79 @@ def create_app(
             run_active=is_run_active(),
             msg=request.query_params.get("msg"),
             err=request.query_params.get("err"),
-            api_ready=api_ready,
-            fake=env.fake_llm and search_client is None,
+            claude_ready=claude.enabled or search_client is not None,
         )
-        return templates.TemplateResponse(request, template, context)
+        return templates.TemplateResponse(request, template, context, status_code=status_code)
 
     def redirect(url: str, *, msg: str | None = None, err: str | None = None) -> RedirectResponse:
-        if msg:
-            url += ("&" if "?" in url else "?") + "msg=" + quote(msg)
-        if err:
-            url += ("&" if "?" in url else "?") + "err=" + quote(err)
+        for key, value in (("msg", msg), ("err", err)):
+            if value:
+                url += ("&" if "?" in url else "?") + f"{key}=" + quote(value)
         return RedirectResponse(url, status_code=303)
+
+    def save_upload(jpeg: bytes) -> str:
+        name = f"{uuid.uuid4().hex}.jpg"
+        (uploads_dir / name).write_bytes(jpeg)
+        return name
+
+    def upload_name(name: str | None) -> str | None:
+        """A photo name from a form, only when it is one of ours."""
+        name = (name or "").strip()
+        return name if re.fullmatch(r"[0-9a-f]{32}\.jpg", name) and (uploads_dir / name).exists() else None
+
+    def remove_upload(name: str | None) -> None:
+        if name := upload_name(name):
+            (uploads_dir / name).unlink(missing_ok=True)
+
+    async def read_photo(form) -> bytes | None:
+        """The form's photo as a shrunk JPEG, None when none was chosen. Raises ValueError for a bad file."""
+        upload = form.get("photo")
+        if not isinstance(upload, UploadFile) or not upload.filename:
+            return None
+        data = await upload.read(extract.MAX_UPLOAD_BYTES + 1)
+        return await run_in_threadpool(extract.prepare_image, data) if data else None
+
+    # ---- health, login, Home Screen app -------------------------------------------------------
+
+    @app.get("/healthz", include_in_schema=False)
+    def healthz() -> dict:
+        return {"status": "ok"}
+
+    @app.get("/login", response_class=HTMLResponse)
+    def login_form(request: Request, next: str = "/"):
+        if not env.auth_enabled:
+            return redirect("/")
+        return render(request, "login.html", next=security.safe_next(next), error=None)
+
+    @app.post("/login")
+    def login(request: Request, password: Annotated[str, Form()], next: Annotated[str, Form()] = "/"):
+        target = security.safe_next(next)
+        if not env.auth_enabled:
+            return redirect(target)
+        match security.login_ok(request, env, password):
+            case True:
+                request.session["auth"] = True
+                return redirect(target)
+            case False:
+                return render(request, "login.html", 401, next=target, error="Wrong password.")
+        return render(
+            request, "login.html", 429, next=target, error="Too many wrong passwords. Try again in 10 minutes."
+        )
+
+    # The manifest and the service worker must sit at the root to cover every page.
+    @app.get("/manifest.webmanifest", include_in_schema=False)
+    def manifest():
+        return FileResponse(STATIC_DIR / "manifest.webmanifest", media_type="application/manifest+json")
+
+    @app.get("/sw.js", include_in_schema=False)
+    def service_worker():
+        return FileResponse(STATIC_DIR / "sw.js", media_type="application/javascript")
+
+    # iOS also asks for the Home Screen icon at these fixed addresses, whatever the page says.
+    @app.get("/apple-touch-icon.png", include_in_schema=False)
+    @app.get("/apple-touch-icon-precomposed.png", include_in_schema=False)
+    def apple_touch_icon():
+        return FileResponse(STATIC_DIR / "apple-touch-icon.png", media_type="image/png")
 
     # ---- dashboard ---------------------------------------------------------------------------
 
@@ -158,55 +250,28 @@ def create_app(
             items = list(session.scalars(select(Item)))
             active = [i for i in items if i.active]
             due = [i for i in active if is_due(i, now, settings)]
-            enabled_retailers = session.scalar(select(func.count()).select_from(Retailer).where(Retailer.status == "enabled")) or 0
-            last_run = session.scalars(select(Run).where(Run.dry_run.is_(False)).order_by(Run.id.desc())).first()
-            last_complete = session.scalars(
-                select(Run).where(Run.dry_run.is_(False), Run.status.in_(["success", "partial"])).order_by(Run.id.desc())
-            ).first()
-            deals: list[tuple[Observation, Item]] = []
-            if last_complete:
-                rows = session.execute(
-                    select(Observation, Item)
-                    .join(Item, Item.id == Observation.item_id)
-                    .where(Observation.run_id == last_complete.id, Observation.is_deal.is_(True))
-                    .order_by(Observation.score.desc())
-                ).all()
-                seen: set[int] = set()
-                for obs, item in rows:
-                    if item.id in seen:
-                        continue
-                    seen.add(item.id)
-                    deals.append((obs, item))
-            since = now - timedelta(days=30)
-            spent_30d = session.scalar(select(func.coalesce(func.sum(Run.cost_usd), 0.0)).where(Run.started_at >= since)) or 0.0
-            runs_30d = session.scalar(select(func.count()).select_from(Run).where(Run.started_at >= since, Run.dry_run.is_(False))) or 0
+            enabled_retailers = (
+                session.scalar(select(func.count()).select_from(Retailer).where(Retailer.status == "enabled")) or 0
+            )
+            last_run = session.scalars(select(Run).order_by(Run.id.desc())).first()
+            last_complete = last_complete_run(session)
+            deals = deals_of(session, last_complete)
         return render(
-            request, "dashboard.html", nav="dashboard", active_count=len(active), due_count=len(due), item_count=len(items),
-            enabled_retailers=enabled_retailers, last_run=last_run, last_complete=last_complete, deals=deals,
-            spent_30d=spent_30d, runs_30d=runs_30d, next_run=scheduler.next_run_time(),
+            request,
+            "dashboard.html",
+            settings=settings,
+            nav="dashboard",
+            active_count=len(active),
+            due_count=len(due),
+            item_count=len(items),
+            enabled_retailers=enabled_retailers,
+            last_run=last_run,
+            last_complete=last_complete,
+            deals=deals,
+            next_run=scheduler.next_run_time(),
         )
 
     # ---- items ------------------------------------------------------------------------------
-
-    def _latest_best_offers(session: Session, item_ids: list[int]) -> dict[int, Observation]:
-        """Best (lowest comparable) offer from each item's most recent run that found it."""
-        best: dict[int, Observation] = {}
-        if not item_ids:
-            return best
-        latest_run = (
-            select(Observation.item_id, func.max(Observation.run_id).label("run_id"))
-            .where(Observation.item_id.in_(item_ids))
-            .group_by(Observation.item_id)
-            .subquery()
-        )
-        rows = session.scalars(
-            select(Observation).join(latest_run, (Observation.item_id == latest_run.c.item_id) & (Observation.run_id == latest_run.c.run_id))
-        )
-        for obs in rows:
-            current = best.get(obs.item_id)
-            if current is None or obs.comparable_price < current.comparable_price:
-                best[obs.item_id] = obs
-        return best
 
     @app.get("/items", response_class=HTMLResponse)
     def items_page(request: Request, q: str = "", category: str = "", priority: str = "", status: str = ""):
@@ -214,166 +279,134 @@ def create_app(
             settings = get_settings(session)
             now = utcnow()
             all_items = list(session.scalars(select(Item).order_by(Item.active.desc(), Item.category, Item.name)))
-            best = _latest_best_offers(session, [i.id for i in all_items])
+            best = latest_best_offers(session, [i.id for i in all_items])
             due_ids = {i.id for i in all_items if is_due(i, now, settings)}
         needle = normalize(q)
-        items = []
+        shown = []
         for item in all_items:
-            if category and item.category != category:
-                continue
-            if priority and item.priority != priority:
-                continue
-            if needle and needle not in normalize(" ".join(filter(None, [item.display_name, item.search_hints, item.notes, item.category]))):
-                continue
             offer = best.get(item.id)
             snoozed = bool(item.snooze_until and item.snooze_until > now)
-            if status == "due" and item.id not in due_ids:
+            if (
+                (category and item.category != category)
+                or (priority and item.priority != priority)
+                or (
+                    needle
+                    and needle
+                    not in normalize(
+                        " ".join(filter(None, [item.display_name, item.search_hints, item.notes, item.category]))
+                    )
+                )
+                or (status == "due" and item.id not in due_ids)
+                or (status == "waiting" and not (item.active and not snoozed and item.id not in due_ids))
+                or (status == "snoozed" and not snoozed)
+                or (status == "paused" and item.active)
+                or (status == "deal" and not (offer and offer.is_deal))
+                or (status == "untracked" and offer is not None)
+            ):
                 continue
-            if status == "waiting" and not (item.active and not snoozed and item.id not in due_ids):
-                continue
-            if status == "snoozed" and not snoozed:
-                continue
-            if status == "paused" and item.active:
-                continue
-            if status == "deal" and not (offer and offer.is_deal):
-                continue
-            if status == "untracked" and offer is not None:
-                continue
-            items.append(item)
-        filters = {"q": q, "category": category, "priority": priority, "status": status, "any": bool(q or category or priority or status)}
-        return render(request, "items.html", nav="items", items=items, total=len(all_items), best=best, due_ids=due_ids, due_count=len(due_ids), filters=filters)
+            shown.append(item)
+        filters = {
+            "q": q,
+            "category": category,
+            "priority": priority,
+            "status": status,
+            "any": bool(q or category or priority or status),
+        }
+        return render(
+            request,
+            "items.html",
+            settings=settings,
+            nav="items",
+            items=shown,
+            total=len(all_items),
+            best=best,
+            due_ids=due_ids,
+            due_count=len(due_ids),
+            filters=filters,
+        )
 
-    # ---- adding items: manual / link / photo -> review card -> create ------------------------
+    # ---- adding items: smart entry or the form -> review card -> create ----------------------
 
     @app.get("/items/new", response_class=HTMLResponse)
-    def item_new(request: Request, mode: str = "manual"):
-        mode = mode if mode in ("manual", "link", "photo") else "manual"
-        return render(request, "item_new.html", nav="items", mode=mode, prefill={}, extract_ready=extract_ready)
-
-    def _draft_from_form(form: dict) -> dict:
-        return {k: (form.get(k) or "").strip() or None for k in ("name", "brand", "category", "priority", "search_hints", "unit", "target_price", "target_unit_price", "check_interval_days", "reference_url", "notes")} | {"bulk_ok": bool(form.get("bulk_ok"))}
-
-    def _draft_from_extracted(item: ExtractedItem, *, reference_url: str | None = None) -> dict:
-        hints = item.search_hints
-        if item.pack_quantity and item.unit and (not hints or item.unit not in hints):
-            hints = f"{hints + ', ' if hints else ''}{item.pack_quantity:g} {item.unit}"
-        return {
-            "name": item.name or (item.product_title or "")[:200], "brand": item.brand, "category": item.category, "priority": "stock_up",
-            "search_hints": hints, "unit": item.unit, "target_price": None, "target_unit_price": None, "check_interval_days": None,
-            "reference_url": reference_url, "notes": None, "bulk_ok": True,
-        }
-
-    def _save_upload(data: bytes) -> str:
-        jpeg, _ = prepare_image(data)
-        name = f"{uuid.uuid4().hex}.jpg"
-        (uploads_dir / name).write_bytes(jpeg)
-        return name
-
-    def _safe_upload_name(name: str | None) -> str | None:
-        name = (name or "").strip()
-        return name if re.fullmatch(r"[0-9a-f]{32}\.jpg", name) and (uploads_dir / name).exists() else None
+    def item_new(request: Request, mode: str = ""):
+        if mode not in ("smart", "manual"):
+            mode = "smart" if claude.enabled else "manual"
+        return render(request, "item_new.html", nav="items", mode=mode, prefill={})
 
     @app.post("/items/review", response_class=HTMLResponse)
     async def item_review(request: Request):
         form = await request.form()
         mode = form.get("mode") or "manual"
-        extracted: ExtractedItem | None = None
-        image_path: str | None = None
+        extracted, image_path = None, None
         if mode == "manual":
-            draft = _draft_from_form(dict(form))
-            if not draft.get("name"):
+            draft = {k: form.get(k) for k in item_store.FIELDS} | {"bulk_ok": bool(form.get("bulk_ok"))}
+            if not (draft.get("name") or "").strip():
                 return redirect("/items/new?mode=manual", err="A name is required.")
-        elif mode in ("link", "photo"):
-            ext = extractor_factory()
-            if ext is None:
-                return redirect(f"/items/new?mode={mode}", err="Link/photo extraction needs ANTHROPIC_API_KEY in .env (or DEALWATCH_FAKE_LLM=1).")
-            with session_factory() as session:
-                settings = get_settings(session)
-            if mode == "link":
-                url = (form.get("url") or "").strip()
-                result = ext.from_url(url, settings)
-                if not result.ok:
-                    return redirect("/items/new?mode=link", err=f"Could not read that page: {result.error}")
-                extracted = result.item
-                draft = _draft_from_extracted(extracted, reference_url=url)
-            else:
-                upload = form.get("photo")
-                data = await upload.read() if hasattr(upload, "read") else b""
-                if not data:
-                    return redirect("/items/new?mode=photo", err="Please choose a photo.")
-                try:
-                    image_path = _save_upload(data)
-                except ValueError as exc:
-                    return redirect("/items/new?mode=photo", err=str(exc))
-                result = ext.from_image(data, settings, filename=getattr(upload, "filename", "") or "photo")
-                if not result.ok:
-                    (uploads_dir / image_path).unlink(missing_ok=True)
-                    return redirect("/items/new?mode=photo", err=f"Could not read the photo: {result.error}")
-                extracted = result.item
-                draft = _draft_from_extracted(extracted)
-            if not draft.get("name"):
-                draft["name"] = ""
+        elif mode == "smart":
+            if not claude.enabled:
+                return redirect("/items/new?mode=manual", err=NOT_CONNECTED)
+            text = str(form.get("text") or "").strip()[:2000]
+            try:
+                photo = await read_photo(form)
+            except ValueError as exc:
+                return redirect("/items/new?mode=smart", err=str(exc))
+            if not text and not photo:
+                return redirect("/items/new?mode=smart", err="Say or type what to watch, add a photo, or both.")
+            try:
+                extracted, link = await run_in_threadpool(extract.draft, claude, text, photo)
+            except Unavailable as exc:
+                return redirect("/items/new?mode=smart", err=str(exc))
+            draft = extracted.to_draft(reference_url=link)
+            if photo:
+                image_path = save_upload(photo)
         else:
             raise HTTPException(400, "unknown mode")
         with session_factory() as session:
-            items = list(session.scalars(select(Item)))
-            similar = find_similar(draft.get("name") or "", draft.get("brand"), items)
-        return render(request, "item_review.html", nav="items", mode=mode, draft=draft, extracted=extracted, image_path=image_path, similar=similar)
+            similar = find_similar(draft.get("name") or "", draft.get("brand"), list(session.scalars(select(Item))))
+        return render(
+            request,
+            "item_review.html",
+            nav="items",
+            mode=mode,
+            draft=draft,
+            extracted=extracted,
+            image_path=image_path,
+            similar=similar,
+        )
 
     @app.post("/items/review/discard")
-    def item_review_discard(image_path: str = Form("")):
-        name = _safe_upload_name(image_path)
-        if name:
-            (uploads_dir / name).unlink(missing_ok=True)
-        return redirect("/items/new?mode=photo", msg="Photo discarded.")
+    def item_review_discard(image_path: Annotated[str, Form()] = ""):
+        remove_upload(image_path)
+        return redirect("/items/new?mode=smart", msg="Discarded.")
 
     @app.get("/api/items/similar")
     def api_items_similar(name: str = "", brand: str = "", exclude: str = ""):
         exclude_id = int(exclude) if exclude.isdigit() else None
         with session_factory() as session:
             matches = find_similar(name, brand or None, list(session.scalars(select(Item))), exclude_id=exclude_id)
-            return {"matches": [{"id": m.item.id, "name": m.item.display_name, "category": CATEGORY_SHORT.get(m.item.category, m.item.category), "score": m.score, "likely_duplicate": m.likely_duplicate} for m in matches]}
-
-    def _apply_item_form(item: Item, form: dict) -> None:
-        name = (form.get("name") or "").strip()
-        if not name:
-            raise ValueError("Name is required")
-        category = form.get("category") or "household"
-        if category not in CATEGORY_KEYS:
-            raise ValueError("Unknown category")
-        priority = form.get("priority") or "stock_up"
-        if priority not in PRIORITY_KEYS:
-            raise ValueError("Unknown priority")
-        item.name = name
-        item.brand = (form.get("brand") or "").strip() or None
-        item.category = category
-        item.search_hints = (form.get("search_hints") or "").strip() or None
-        unit = (form.get("unit") or "").strip() or None
-        item.unit = unit if unit in UNITS else None
-        item.bulk_ok = bool(form.get("bulk_ok"))
-        item.priority = priority
-        item.target_price = _float_or_none(form.get("target_price"))
-        item.target_unit_price = _float_or_none(form.get("target_unit_price"))
-        item.check_interval_days = _int_or_none(form.get("check_interval_days"))
-        item.notes = (form.get("notes") or "").strip() or None
-        url = (form.get("reference_url") or "").strip()
-        if url and not url.lower().startswith(("http://", "https://")):
-            raise ValueError("Product link must start with http:// or https://")
-        item.reference_url = url or None
+            return {
+                "matches": [
+                    {
+                        "id": m.item.id,
+                        "name": m.item.display_name,
+                        "category": CATEGORY_SHORT.get(m.item.category, m.item.category),
+                        "score": m.score,
+                        "likely_duplicate": m.likely_duplicate,
+                    }
+                    for m in matches
+                ]
+            }
 
     @app.post("/items")
     async def add_item(request: Request):
         form = dict(await request.form())
-        item = Item()
         try:
-            _apply_item_form(item, form)
+            data = item_store.from_form(form)
         except ValueError as exc:
-            return redirect("/items/new", err=str(exc))
-        item.image_path = _safe_upload_name(form.get("image_path"))
+            return redirect("/items/new?mode=manual", err=str(exc))
         with session_factory() as session:
-            session.add(item)
-            session.commit()
-        return redirect(f"/items/{item.id}", msg=f"Added '{item.display_name}'. It will be checked in the next run.")
+            item = item_store.create_item(session, data, upload_name(form.get("image_path")))
+        return redirect(f"/items/{item.id}", msg=f"Added {item.display_name}. It is checked in the next price check.")
 
     @app.get("/items/{item_id}", response_class=HTMLResponse)
     def item_detail(request: Request, item_id: int):
@@ -382,21 +415,52 @@ def create_app(
             if item is None:
                 raise HTTPException(404)
             history = list(
-                session.scalars(select(Observation).where(Observation.item_id == item_id).order_by(Observation.observed_at.desc(), Observation.price).limit(60))
+                session.scalars(
+                    select(Observation)
+                    .where(Observation.item_id == item_id)
+                    .order_by(Observation.observed_at.desc(), Observation.price)
+                    .limit(60)
+                )
             )
-            checks = list(session.scalars(select(RunItem).where(RunItem.item_id == item_id).order_by(RunItem.id.desc()).limit(10)))
+            checks = list(
+                session.scalars(select(RunItem).where(RunItem.item_id == item_id).order_by(RunItem.id.desc()).limit(10))
+            )
             settings = get_settings(session)
             now = utcnow()
-            due = is_due(item, now, settings)
             insight = item_insight(session, item, now)
-            points = list(session.scalars(select(PricePoint).where(PricePoint.item_id == item_id).order_by(PricePoint.observed_at.desc())))
+            points = list(
+                session.scalars(
+                    select(PricePoint).where(PricePoint.item_id == item_id).order_by(PricePoint.observed_at.desc())
+                )
+            )
             breakdown = retailer_breakdown(session, item_id, insight.basis)
-            chart_html = line_chart(
-                [Series("Best price", [(p.at, p.best) for p in insight.points]), Series("Average of offers", [(p.at, p.avg) for p in insight.points])],
-                chart_id=f"item-{item_id}", title=f"Price per check{insight.unit_label} - {item.display_name}", unit_suffix=insight.unit_label,
-            ) if insight.points else ""
-        return render(request, "item_detail.html", nav="items", item=item, history=history, checks=checks, due=due,
-                      insight=insight, points=points, breakdown=breakdown, chart_html=chart_html)
+            chart_html = (
+                line_chart(
+                    [
+                        Series("Best price", [(p.at, p.best) for p in insight.points]),
+                        Series("Average of offers", [(p.at, p.avg) for p in insight.points]),
+                    ],
+                    chart_id=f"item-{item_id}",
+                    title=f"Price per check{insight.unit_label} - {item.display_name}",
+                    unit_suffix=insight.unit_label,
+                )
+                if insight.points
+                else ""
+            )
+        return render(
+            request,
+            "item_detail.html",
+            settings=settings,
+            nav="items",
+            item=item,
+            history=history,
+            checks=checks,
+            due=is_due(item, now, settings),
+            insight=insight,
+            points=points,
+            breakdown=breakdown,
+            chart_html=chart_html,
+        )
 
     @app.post("/items/{item_id}")
     async def update_item(request: Request, item_id: int):
@@ -406,53 +470,72 @@ def create_app(
             if item is None:
                 raise HTTPException(404)
             try:
-                _apply_item_form(item, form)
+                item_store.change_item(session, item, item_store.from_form(form).model_dump())
             except ValueError as exc:
                 return redirect(f"/items/{item_id}", err=str(exc))
-            session.commit()
         return redirect(f"/items/{item_id}", msg="Saved.")
 
     @app.post("/items/{item_id}/action")
-    def item_action(item_id: int, action: str = Form(...)):
+    def item_action(item_id: int, action: Annotated[str, Form()]):
         with session_factory() as session:
             item = session.get(Item, item_id)
             if item is None:
                 raise HTTPException(404)
-            settings = get_settings(session)
-            msg = "Done."
             if action == "delete":
-                name = _safe_upload_name(item.image_path)
-                if name:
-                    (uploads_dir / name).unlink(missing_ok=True)
+                remove_upload(item.image_path)
                 session.delete(item)
                 session.commit()
-                return redirect("/items", msg=f"Deleted '{item.display_name}'.")
-            if action == "toggle":
-                item.active = not item.active
-                msg = "Item re-activated." if item.active else "Item paused (no more checks)."
-            elif action == "bought":
-                item.last_bought_at = utcnow()
-                item.snooze_until = utcnow() + timedelta(days=settings.bought_snooze_days)
-                msg = f"Marked as bought - skipped for {settings.bought_snooze_days} days."
-            elif action == "unsnooze":
-                item.snooze_until = None
-                msg = "Snooze removed."
-            elif action == "check_next":
-                item.last_checked_at = None
-                item.snooze_until = None
-                msg = "Will be checked in the next run."
-            elif action == "remove_photo":
-                name = _safe_upload_name(item.image_path)
-                if name:
-                    (uploads_dir / name).unlink(missing_ok=True)
+                return redirect("/items", msg=f"Deleted {item.display_name}.")
+            if action == "remove_photo":
+                remove_upload(item.image_path)
                 item.image_path = None
-                msg = "Photo removed."
-            else:
-                raise HTTPException(400, "unknown action")
-            session.commit()
+                session.commit()
+                return redirect(f"/items/{item_id}", msg="Photo removed.")
+            try:
+                msg = item_store.apply_action(session, item, action, get_settings(session))
+            except ValueError as exc:
+                raise HTTPException(400, str(exc)) from None
         return redirect(f"/items/{item_id}", msg=msg)
 
+    # ---- Ask ---------------------------------------------------------------------------------
+
+    @app.get("/ask", response_class=HTMLResponse)
+    def ask_page(request: Request):
+        with session_factory() as session:
+            turns = ask.history(session, SHOWN_TURNS)
+        return render(request, "ask.html", nav="ask", turns=turns)
+
+    @app.post("/ask")
+    async def ask_post(request: Request):
+        form = await request.form()
+        text = str(form.get("question") or "").strip()[:2000]
+        try:
+            photo = await read_photo(form)
+        except ValueError as exc:
+            return redirect("/ask", err=str(exc))
+        if not claude.enabled:
+            return redirect("/ask", err=NOT_CONNECTED)
+        if not text and not photo:
+            return redirect("/ask")
+        model = str(form.get("model") or "")
+
+        def answer() -> None:
+            with session_factory() as session:
+                ask.reply(claude, session, get_settings(session), text, model, photo)
+
+        await run_in_threadpool(answer)
+        return RedirectResponse("/ask#latest", status_code=303)
+
+    @app.post("/ask/clear")
+    def ask_clear():
+        with session_factory() as session:
+            ask.clear_history(session)
+        return redirect("/ask")
+
     # ---- retailers --------------------------------------------------------------------------
+
+    def _categories(raw: str | None) -> str | None:
+        return ",".join(c for c in (raw or "").replace(" ", "").split(",") if c in CATEGORY_KEYS) or None
 
     @app.get("/retailers", response_class=HTMLResponse)
     def retailers_page(request: Request):
@@ -467,14 +550,19 @@ def create_app(
         domain = normalize_domain(form.get("domain") or "")
         if not is_valid_domain(domain):
             return redirect("/retailers", err="Enter a bare domain such as bol.com (no https://, no wildcards).")
-        status = form.get("status") or "enabled"
-        if status not in RETAILER_STATUSES:
-            status = "enabled"
-        categories = ",".join(c for c in (form.get("categories") or "").replace(" ", "").split(",") if c in CATEGORY_KEYS)
+        status = form.get("status") if form.get("status") in RETAILER_STATUSES else "enabled"
         with session_factory() as session:
             if session.scalar(select(Retailer).where(Retailer.domain == domain)):
                 return redirect("/retailers", err=f"{domain} is already in the list.")
-            session.add(Retailer(name=name or domain, domain=domain, status=status, categories=categories or None, notes=(form.get("notes") or "").strip() or None))
+            session.add(
+                Retailer(
+                    name=name or domain,
+                    domain=domain,
+                    status=status,
+                    categories=_categories(form.get("categories")),
+                    notes=(form.get("notes") or "").strip() or None,
+                )
+            )
             session.commit()
         return redirect("/retailers", msg=f"Added {domain} ({status}).")
 
@@ -495,13 +583,16 @@ def create_app(
                 session.commit()
                 return redirect("/retailers", msg=f"{retailer.domain} is now {action}.")
             retailer.name = (form.get("name") or "").strip() or retailer.domain
-            retailer.categories = ",".join(c for c in (form.get("categories") or "").replace(" ", "").split(",") if c in CATEGORY_KEYS) or None
+            retailer.categories = _categories(form.get("categories"))
             retailer.notes = (form.get("notes") or "").strip() or None
-            retailer.sort_order = _int_or_none(form.get("sort_order")) or retailer.sort_order
+            try:
+                retailer.sort_order = int(form.get("sort_order") or retailer.sort_order)
+            except ValueError:
+                return redirect("/retailers", err="Order must be a whole number.")
             session.commit()
         return redirect("/retailers", msg=f"Saved {retailer.domain}.")
 
-    # ---- runs -------------------------------------------------------------------------------
+    # ---- price checks -----------------------------------------------------------------------
 
     @app.get("/runs", response_class=HTMLResponse)
     def runs_page(request: Request):
@@ -510,30 +601,23 @@ def create_app(
         return render(request, "runs.html", nav="runs", runs=runs)
 
     @app.post("/runs/start")
-    def start_run(force: str | None = Form(None)):
-        if not api_ready:
-            return redirect("/runs", err="No Anthropic credentials found. Put ANTHROPIC_API_KEY in .env (or set DEALWATCH_FAKE_LLM=1 to try without credits).")
+    def start_run(force: Annotated[str | None, Form()] = None):
+        client = client_factory()
+        if client is None:
+            return redirect("/runs", err=NOT_CONNECTED)
         if is_run_active():
-            return redirect("/runs", err="A run is already in progress.")
+            return redirect("/runs", err="A price check is already in progress.")
 
         def worker() -> None:
             try:
-                execute_run(session_factory, client_factory(), env=env, trigger="manual", force=bool(force))
+                execute_run(session_factory, client, trigger="manual", force=bool(force))
             except RunInProgress:
-                log.warning("run skipped: already active")
+                log.warning("price check skipped: one is already running")
             except Exception:
-                log.exception("manual run failed")
+                log.exception("manual price check failed")
 
-        threading.Thread(target=worker, name="dealwatch-run", daemon=True).start()
-        return redirect("/runs", msg="Run started in the background - refresh this page in a minute.")
-
-    @app.post("/runs/plan")
-    def plan_run(force: str | None = Form(None)):
-        try:
-            run_id = execute_run(session_factory, client_factory(), env=env, trigger="manual", dry_run=True, force=bool(force))
-        except RunInProgress:
-            return redirect("/runs", err="A run is already in progress.")
-        return redirect(f"/runs/{run_id}", msg="Dry run: this is what the next run would do (no credits spent).")
+        threading.Thread(target=worker, name="dealwatch-check", daemon=True).start()
+        return redirect("/runs", msg="Price check started. It takes a few minutes; refresh this page to follow it.")
 
     @app.get("/runs/{run_id}", response_class=HTMLResponse)
     def run_detail(request: Request, run_id: int):
@@ -544,12 +628,24 @@ def create_app(
             report = session.scalar(select(Report).where(Report.run_id == run_id))
             observations = list(
                 session.execute(
-                    select(Observation, Item).join(Item, Item.id == Observation.item_id).where(Observation.run_id == run_id).order_by(Observation.is_deal.desc(), Observation.score.desc())
+                    select(Observation, Item)
+                    .join(Item, Item.id == Observation.item_id)
+                    .where(Observation.run_id == run_id)
+                    .order_by(Observation.is_deal.desc(), Observation.score.desc())
                 ).all()
             )
             log_data = json.loads(run.log_json) if run.log_json else {}
             plan_data = json.loads(run.plan_json) if run.plan_json else {}
-        return render(request, "run_detail.html", nav="runs", run=run, report=report, observations=observations, log=log_data, plan=plan_data, plan_pretty=json.dumps(plan_data, indent=1, ensure_ascii=False))
+        return render(
+            request,
+            "run_detail.html",
+            nav="runs",
+            run=run,
+            report=report,
+            observations=observations,
+            log=log_data,
+            plan_pretty=json.dumps(plan_data, indent=1, ensure_ascii=False),
+        )
 
     @app.get("/runs/{run_id}/report.md", response_class=PlainTextResponse)
     def run_report_markdown(run_id: int):
@@ -571,23 +667,17 @@ def create_app(
     @app.post("/settings")
     async def save_settings_route(request: Request):
         form = dict(await request.form())
-        values: dict[str, object] = {}
-        for spec in SPECS:
-            if spec.kind == "bool":
-                values[spec.key] = spec.key in form
-            elif spec.key in form:
-                values[spec.key] = form[spec.key]
-        custom_model = (form.get("search_model_custom") or "").strip()
-        if custom_model:
-            values["search_model"] = custom_model
+        values = {
+            spec.key: (spec.key in form) if spec.kind == "bool" else form[spec.key]
+            for spec in SPECS
+            if spec.kind == "bool" or spec.key in form
+        }
         with session_factory() as session:
             errors = save_settings(session, values)
+            claude.timezone = get_settings(session).timezone
         if errors:
             return redirect("/settings", err=" · ".join(errors))
-        try:
-            scheduler.reload()
-        except Exception as exc:  # scheduler not started (tests / disabled)
-            log.debug("scheduler reload skipped: %s", exc)
+        scheduler.reload()
         return redirect("/settings", msg="Settings saved.")
 
     @app.post("/seed-samples")
@@ -596,7 +686,7 @@ def create_app(
             added = seed_sample_items(session)
         return redirect("/items", msg=f"Added {added} sample item(s).")
 
-    # ---- tracker / insights -------------------------------------------------------------------
+    # ---- tracker and exports ----------------------------------------------------------------
 
     @app.get("/tracker", response_class=HTMLResponse)
     def tracker_page(request: Request):
@@ -605,12 +695,14 @@ def create_app(
             insights = all_item_insights(session, now)
             ov = overview(session, now, insights)
             sparks = {i.item.id: sparkline([p.best for p in i.points][-12:]) for i in insights if i.n_points >= 2}
-        tracked = sorted([i for i in insights if i.n_points], key=lambda i: (i.change_vs_prev_pct if i.change_vs_prev_pct is not None else 0))
+        tracked = sorted(
+            [i for i in insights if i.n_points],
+            key=lambda i: i.change_vs_prev_pct if i.change_vs_prev_pct is not None else 0,
+        )
         untracked = [i for i in insights if not i.n_points]
-        return render(request, "tracker.html", nav="tracker", ov=ov, tracked=tracked, untracked=untracked, sparks=sparks)
-
-    _EXPORTS = {"items": Item, "retailers": Retailer, "runs": Run, "observations": Observation, "price_points": PricePoint, "run_items": RunItem}
-    _EXPORT_SKIP = {"runs": {"plan_json", "log_json"}}
+        return render(
+            request, "tracker.html", nav="tracker", ov=ov, tracked=tracked, untracked=untracked, sparks=sparks
+        )
 
     def _csv_response(model, filename: str, where=None) -> Response:
         skip = _EXPORT_SKIP.get(filename, set())
@@ -624,7 +716,11 @@ def create_app(
                 query = query.where(where)
             for row in session.scalars(query):
                 writer.writerow([getattr(row, c) for c in columns])
-        return Response(buffer.getvalue(), media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="{filename}.csv"'})
+        return Response(
+            buffer.getvalue(),
+            media_type="text/csv",
+            headers={"Content-Disposition": f'attachment; filename="{filename}.csv"'},
+        )
 
     @app.get("/export/{table}.csv")
     def export_csv(table: str):
@@ -637,51 +733,4 @@ def create_app(
     def export_item_points(item_id: int):
         return _csv_response(PricePoint, f"item-{item_id}-price_points", PricePoint.item_id == item_id)
 
-    @app.get("/api/items/{item_id}/prices")
-    def api_item_prices(item_id: int):
-        with session_factory() as session:
-            item = session.get(Item, item_id)
-            if item is None:
-                raise HTTPException(404)
-            ins = item_insight(session, item, utcnow())
-            return {
-                "item": {"id": item.id, "name": item.display_name, "unit": item.unit, "basis": ins.basis},
-                "stats": {
-                    "checks": ins.n_points, "first_seen": ins.first_seen.isoformat() if ins.first_seen else None,
-                    "last_best": ins.last.best if ins.last else None, "all_time_low": ins.low, "all_time_low_at": ins.low_at.isoformat() if ins.low_at else None,
-                    "avg_30d": ins.avg_30d, "change_vs_prev_pct": ins.change_vs_prev_pct, "trend": ins.trend, "volatility_pct": ins.volatility_pct,
-                    "best_shop": ins.best_domain, "promo_share_pct": ins.promo_share_pct,
-                },
-                "points": [{"at": p.at.isoformat(), "best": p.best, "avg": p.avg, "shop": p.domain, "run_id": p.run_id, "promo": p.promo} for p in ins.points],
-            }
-
-    # ---- small JSON API (handy for scripts/agents) --------------------------------------------
-
-    @app.get("/api/health")
-    def api_health():
-        with session_factory() as session:
-            item_count = session.scalar(select(func.count()).select_from(Item)) or 0
-        return {"ok": True, "items": item_count, "run_active": is_run_active(), "api_ready": api_ready, "fake_llm": env.fake_llm}
-
-    @app.get("/api/runs/latest")
-    def api_latest_run():
-        with session_factory() as session:
-            run = session.scalars(select(Run).where(Run.dry_run.is_(False)).order_by(Run.id.desc())).first()
-            if run is None:
-                return JSONResponse({"run": None})
-            deals = session.execute(
-                select(Observation, Item).join(Item, Item.id == Observation.item_id).where(Observation.run_id == run.id, Observation.is_deal.is_(True)).order_by(Observation.score.desc())
-            ).all()
-            return {
-                "run": {"id": run.id, "status": run.status, "started_at": run.started_at.isoformat(), "deal_count": run.deal_count, "cost_usd": run.cost_usd},
-                "deals": [
-                    {"item": item.display_name, "price": obs.price, "unit_price": obs.unit_price, "unit": obs.unit, "retailer": obs.retailer_domain, "url": obs.url, "discount_pct": obs.discount_pct, "reasons": obs.reasons}
-                    for obs, item in deals
-                ],
-            }
-
     return app
-
-
-def app_factory() -> FastAPI:  # for `uvicorn dealwatch.web.app:app_factory --factory`
-    return create_app()

@@ -1,3 +1,3 @@
-"""Dealwatch - personal deal watcher for a household shopping/wish list."""
+"""Dealwatch: a household shopping and wish list, watched for real deals."""
 
-__version__ = "0.1.0"
+__version__ = "1.0.0"

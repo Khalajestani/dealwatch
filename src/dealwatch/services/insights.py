@@ -64,7 +64,9 @@ class ItemInsight:
     @property
     def at_all_time_low(self) -> bool:
         """The latest check is at (or ties) the lowest price ever recorded for this item."""
-        return self.last is not None and self.low is not None and self.n_points >= 2 and self.last.best <= self.low + 1e-9
+        return (
+            self.last is not None and self.low is not None and self.n_points >= 2 and self.last.best <= self.low + 1e-9
+        )
 
     @property
     def is_new_low(self) -> bool:
@@ -90,13 +92,17 @@ def _slope_pct_per_step(values: list[float]) -> float | None:
     denominator = sum((x - x_mean) ** 2 for x in xs)
     if denominator == 0 or y_mean == 0:
         return None
-    slope = sum((x - x_mean) * (y - y_mean) for x, y in zip(xs, values)) / denominator
+    slope = sum((x - x_mean) * (y - y_mean) for x, y in zip(xs, values, strict=True)) / denominator
     return slope / y_mean * 100
 
 
 def item_insight(session: Session, item: Item, now: datetime, points: list[PricePoint] | None = None) -> ItemInsight:
     if points is None:
-        points = list(session.scalars(select(PricePoint).where(PricePoint.item_id == item.id).order_by(PricePoint.observed_at, PricePoint.id)))
+        points = list(
+            session.scalars(
+                select(PricePoint).where(PricePoint.item_id == item.id).order_by(PricePoint.observed_at, PricePoint.id)
+            )
+        )
     insight = ItemInsight(item=item)
     if not points:
         return insight
@@ -106,7 +112,16 @@ def item_insight(session: Session, item: Item, now: datetime, points: list[Price
         best, avg = _comparable(p, insight.basis)
         if best is None:
             continue
-        insight.points.append(SeriesPoint(at=p.observed_at, best=best, avg=avg if avg is not None else best, run_id=p.run_id, domain=p.best_domain, promo=bool(p.promo_count)))
+        insight.points.append(
+            SeriesPoint(
+                at=p.observed_at,
+                best=best,
+                avg=avg if avg is not None else best,
+                run_id=p.run_id,
+                domain=p.best_domain,
+                promo=bool(p.promo_count),
+            )
+        )
     series = insight.points
     if not series:
         return insight
@@ -128,7 +143,9 @@ def item_insight(session: Session, item: Item, now: datetime, points: list[Price
     slope = _slope_pct_per_step(bests[-TREND_WINDOW:])
     if slope is not None:
         insight.trend_pct_per_check = round(slope, 2)
-        insight.trend = "falling" if slope < -TREND_THRESHOLD_PCT else ("rising" if slope > TREND_THRESHOLD_PCT else "flat")
+        insight.trend = (
+            "falling" if slope < -TREND_THRESHOLD_PCT else ("rising" if slope > TREND_THRESHOLD_PCT else "flat")
+        )
     if len(bests) >= 2 and insight.avg_all:
         insight.volatility_pct = round(pstdev(bests) / insight.avg_all * 100, 1)
     domains = Counter(s.domain for s in series if s.domain)
@@ -160,7 +177,9 @@ class RetailerStat:
 
 
 def retailer_breakdown(session: Session, item_id: int, basis: str) -> list[RetailerStat]:
-    observations = list(session.scalars(select(Observation).where(Observation.item_id == item_id).order_by(Observation.observed_at)))
+    observations = list(
+        session.scalars(select(Observation).where(Observation.item_id == item_id).order_by(Observation.observed_at))
+    )
     wins = Counter(p.best_domain for p in session.scalars(select(PricePoint).where(PricePoint.item_id == item_id)))
     grouped: dict[str, list[Observation]] = defaultdict(list)
     for obs in observations:
@@ -171,7 +190,17 @@ def retailer_breakdown(session: Session, item_id: int, basis: str) -> list[Retai
     stats: list[RetailerStat] = []
     for domain, rows in grouped.items():
         values = [(o.unit_price if basis == "unit" else o.price) for o in rows]
-        stats.append(RetailerStat(domain=domain, n_offers=len(rows), min_price=min(values), avg_price=mean(values), last_price=values[-1], last_seen=rows[-1].observed_at, wins=wins.get(domain, 0)))
+        stats.append(
+            RetailerStat(
+                domain=domain,
+                n_offers=len(rows),
+                min_price=min(values),
+                avg_price=mean(values),
+                last_price=values[-1],
+                last_seen=rows[-1].observed_at,
+                wins=wins.get(domain, 0),
+            )
+        )
     stats.sort(key=lambda s: (s.min_price, -s.wins))
     return stats
 
@@ -184,14 +213,15 @@ class Overview:
     observations: int = 0
     runs: int = 0
     first_point_at: datetime | None = None
-    spend_30d: float = 0.0
     at_low: list[ItemInsight] = field(default_factory=list)
     movers_down: list[ItemInsight] = field(default_factory=list)
     movers_up: list[ItemInsight] = field(default_factory=list)
     leaderboard: list[tuple[str, int]] = field(default_factory=list)  # (domain, checks won)
 
 
-def overview(session: Session, now: datetime, insights: list[ItemInsight] | None = None, mover_threshold_pct: float = 5.0) -> Overview:
+def overview(
+    session: Session, now: datetime, insights: list[ItemInsight] | None = None, mover_threshold_pct: float = 5.0
+) -> Overview:
     insights = insights if insights is not None else all_item_insights(session, now)
     ov = Overview()
     ov.items_total = len(insights)
@@ -199,13 +229,16 @@ def overview(session: Session, now: datetime, insights: list[ItemInsight] | None
     ov.items_tracked = len(tracked)
     ov.points = session.scalar(select(func.count()).select_from(PricePoint)) or 0
     ov.observations = session.scalar(select(func.count()).select_from(Observation)) or 0
-    ov.runs = session.scalar(select(func.count()).select_from(Run).where(Run.dry_run.is_(False), Run.status.in_(["success", "partial"]))) or 0
+    ov.runs = session.scalar(select(func.count()).select_from(Run).where(Run.status.in_(["success", "partial"]))) or 0
     ov.first_point_at = session.scalar(select(func.min(PricePoint.observed_at)))
-    ov.spend_30d = session.scalar(select(func.coalesce(func.sum(Run.cost_usd), 0.0)).where(Run.started_at >= now - timedelta(days=30))) or 0.0
     ov.at_low = [i for i in tracked if i.at_all_time_low]
     movers = [i for i in tracked if i.change_vs_prev_pct is not None]
-    ov.movers_down = sorted([i for i in movers if i.change_vs_prev_pct <= -mover_threshold_pct], key=lambda i: i.change_vs_prev_pct)[:8]
-    ov.movers_up = sorted([i for i in movers if i.change_vs_prev_pct >= mover_threshold_pct], key=lambda i: -i.change_vs_prev_pct)[:8]
+    ov.movers_down = sorted(
+        [i for i in movers if i.change_vs_prev_pct <= -mover_threshold_pct], key=lambda i: i.change_vs_prev_pct
+    )[:8]
+    ov.movers_up = sorted(
+        [i for i in movers if i.change_vs_prev_pct >= mover_threshold_pct], key=lambda i: -i.change_vs_prev_pct
+    )[:8]
     wins = Counter(p.best_domain for p in session.scalars(select(PricePoint)) if p.best_domain)
     ov.leaderboard = wins.most_common(10)
     return ov

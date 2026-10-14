@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% from "_macros.html" import talk_box with context %}
+{% block title %}Ask · Dealwatch{% endblock %}
+{% block content %}
+<h1>{{ icon('message') }} Ask</h1>
+{% if turns %}
+<div class="card conversation">
+  {% for turn in turns %}
+  <div class="{{ 'question' if turn.role == 'user' else 'answer' }}"{% if loop.last %} id="latest"{% endif %}>{{ turn.content }}</div>
+  {% endfor %}
+  <form method="post" action="/ask/clear" class="conversation-actions" data-confirm="Clear the conversation? Your list is not touched.">
+    <button type="submit" class="small ghost">{{ icon('trash', 'sm') }} Clear conversation</button>
+  </form>
+</div>
+{% endif %}
+
+<div class="card">
+  {% if claude_ready %}
+  <form method="post" action="/ask" enctype="multipart/form-data" data-busy="Thinking...">
+    {{ talk_box("question", "Is €4.99 for 8 rolls of Page a good price? Or: add Ariel pods, buy when under 22 cents a wash.", photo=true) }}
+    <div class="actions">
+      {# Remembered on this device by app.js. #}
+      <select name="model" data-remember="dealwatch.model" aria-label="Model" title="Which Claude model answers">
+        {% for value, label in ask_models.items() %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+      </select>
+      <button class="primary" type="submit">{{ icon('sparkles', 'sm') }} Ask</button>
+    </div>
+  </form>
+  <div class="examples">
+    <h3>Try</h3>
+    <ul>
+      <li data-example>What are the best deals right now?</li>
+      <li data-example>Is the coffee cheaper than usual?</li>
+      <li data-example>I bought toilet paper today</li>
+      <li data-example>Watch Dreft Platinum dishwasher tablets, I need them soon</li>
+      <li data-example>Set the drill target to 129 euro</li>
+    </ul>
+  </div>
+  {% else %}
+  <p>Claude is not connected yet. Everything else works without it.</p>
+  <p class="muted">To connect it to your Claude plan, follow docs/assistant.md.</p>
+  {% endif %}
+</div>
+{% endblock %}

@@ -29,3 +29,20 @@
 <div class="wide"><label>Product link <span class="faint">(optional, used as a search hint)</span></label><input type="url" name="reference_url" value="{{ v.get('reference_url') or '' }}" placeholder="https://www.bol.com/…"></div>
 <div class="wide"><label>Notes</label><input type="text" name="notes" value="{{ v.get('notes') or '' }}"></div>
 {%- endmacro %}
+
+{% macro talk_box(name, placeholder, photo=false) -%}
+{# A box to type or talk into (the mic shows where the browser can turn speech into text), with an optional photo. #}
+<div class="talk">
+  <div class="talk-field">
+    <textarea id="{{ name }}" name="{{ name }}" rows="3" maxlength="2000" placeholder="{{ placeholder }}"></textarea>
+    <button type="button" class="mic-btn" data-voice="{{ name }}" title="Talk" aria-label="Talk" hidden>{{ icon('mic') }}</button>
+  </div>
+  <div class="voice-status muted small" aria-live="polite"></div>
+  {% if photo %}
+  <div class="talk-photo">
+    <label class="btn small">{{ icon('camera', 'sm') }} Add a photo<input type="file" name="photo" accept="image/*" data-preview="{{ name }}-photo" hidden></label>
+    <img id="{{ name }}-photo" class="preview" alt="The photo that goes with it">
+  </div>
+  {% endif %}
+</div>
+{%- endmacro %}

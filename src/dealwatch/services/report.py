@@ -34,7 +34,12 @@ def local_time(value: datetime | None, tz_name: str) -> str:
         tz = ZoneInfo(tz_name)
     except Exception:  # unknown tz name in settings
         tz = ZoneInfo("UTC")
-    return value.replace(tzinfo=ZoneInfo("UTC")).astimezone(tz).strftime("%a %d %b %Y %H:%M")
+    return value.replace(tzinfo=ZoneInfo("UTC")).astimezone(tz).strftime("%a %d/%m/%Y %H:%M")
+
+
+def local_date(value: datetime | None, tz_name: str) -> str | None:
+    """dd/mm/yyyy in the app's time zone, or None."""
+    return local_time(value, tz_name).split(" ")[1] if value else None
 
 
 def safe(text: str | None) -> str:
@@ -74,7 +79,7 @@ def _offer_line(obs: Observation, item: Item, currency: str) -> str:
         parts.append(promo)
     if obs.valid_until:
         parts.append(f"until {obs.valid_until.isoformat()}")
-    parts.append(f"confidence {int(round(obs.confidence * 100))}%")
+    parts.append(f"confidence {round(obs.confidence * 100)}%")
     return " · ".join(parts)
 
 
@@ -92,15 +97,17 @@ def _history_line(insight: ItemInsight, run_id: int, currency: str) -> str | Non
         return None
     low = min(prior, key=lambda p: p.best)
     suffix = insight.unit_label
-    parts = [f"lowest seen {money(low.best, currency)}{suffix} on {low.at.strftime('%d %b')} at {safe(low.domain)}"]
+    parts = [f"lowest seen {money(low.best, currency)}{suffix} on {low.at:%d/%m/%Y} at {safe(low.domain)}"]
     recent = [p.best for p in prior if p.at >= insight.last.at - timedelta(days=30)] if insight.last else []
     if recent:
         parts.append(f"30-day avg {money(sum(recent) / len(recent), currency)}{suffix}")
-    parts.append(f"{len(prior)} earlier check(s) since {prior[0].at.strftime('%d %b %Y')}")
+    parts.append(f"{len(prior)} earlier check(s) since {prior[0].at:%d/%m/%Y}")
     return " · ".join(parts)
 
 
-def _tracker_section(insights: dict[int, ItemInsight], items: dict[int, Item], run: Run, settings: Settings) -> list[str]:
+def _tracker_section(
+    insights: dict[int, ItemInsight], items: dict[int, Item], run: Run, settings: Settings
+) -> list[str]:
     lines: list[str] = []
     current = [i for i in insights.values() if i.last and i.last.run_id == run.id]
     if not current:
@@ -113,8 +120,14 @@ def _tracker_section(insights: dict[int, ItemInsight], items: dict[int, Item], r
         lines.append("")
         return lines
     threshold = max(3.0, settings.min_discount_pct / 2)
-    down = sorted([i for i in with_history if i.change_vs_prev_pct is not None and i.change_vs_prev_pct <= -threshold], key=lambda i: i.change_vs_prev_pct)[:6]
-    up = sorted([i for i in with_history if i.change_vs_prev_pct is not None and i.change_vs_prev_pct >= threshold], key=lambda i: -i.change_vs_prev_pct)[:6]
+    down = sorted(
+        [i for i in with_history if i.change_vs_prev_pct is not None and i.change_vs_prev_pct <= -threshold],
+        key=lambda i: i.change_vs_prev_pct,
+    )[:6]
+    up = sorted(
+        [i for i in with_history if i.change_vs_prev_pct is not None and i.change_vs_prev_pct >= threshold],
+        key=lambda i: -i.change_vs_prev_pct,
+    )[:6]
     currency = settings.currency
     for label, movers in (("Cheaper than last check", down), ("More expensive than last check", up)):
         if movers:
@@ -127,10 +140,15 @@ def _tracker_section(insights: dict[int, ItemInsight], items: dict[int, Item], r
             lines.append("")
     lows = [i for i in with_history if i.is_new_low]
     if lows:
-        lines.append("**New all-time low:** " + ", ".join(f"{safe(i.item.display_name)} ({money(i.last.best, currency)}{i.unit_label})" for i in lows))
+        lines.append(
+            "**New all-time low:** "
+            + ", ".join(f"{safe(i.item.display_name)} ({money(i.last.best, currency)}{i.unit_label})" for i in lows)
+        )
         lines.append("")
     stable = len(with_history) - len(down) - len(up)
-    lines.append(f"_{len(with_history)} item(s) compared with their previous check; {stable} unchanged within ±{threshold:.0f}%. See the Tracker page for charts and per-shop stats._")
+    lines.append(
+        f"_{len(with_history)} item(s) compared with their previous check; {stable} unchanged within ±{threshold:.0f}%. See the Tracker page for charts and per-shop stats._"
+    )
     lines.append("")
     return lines
 
@@ -138,25 +156,24 @@ def _tracker_section(insights: dict[int, ItemInsight], items: dict[int, Item], r
 def build_report(session: Session, run: Run, plan: RunPlan | None, settings: Settings) -> str:
     currency = settings.currency
     lines: list[str] = []
-    when = local_time(run.started_at, settings.timezone)
-    title = "Dealwatch plan (dry run)" if run.dry_run else "Dealwatch report"
-    lines.append(f"# {title} - run #{run.id} - {when}")
+    lines.append(f"# Dealwatch report - check #{run.id} - {local_time(run.started_at, settings.timezone)}")
     lines.append("")
-
-    if run.dry_run:
-        lines.extend(_plan_section(plan, run, settings))
-        return "\n".join(lines).rstrip() + "\n"
-
     lines.append(
         f"Checked **{run.items_checked}** item(s) in {run.groups_completed} batch(es) · "
-        f"{run.web_searches} web searches · {run.api_requests} API calls · ~${run.cost_usd:.2f} · model {run.model}"
+        f"{run.web_lookups} web lookups · model {run.model}"
     )
     if run.groups_failed:
-        lines.append(f"\n> ⚠️ {run.groups_failed} batch(es) failed - see Errors below. Their items will be retried next run.")
+        lines.append(
+            f"\n> ⚠️ {run.groups_failed} batch(es) failed - see Errors below. Their items will be retried next run."
+        )
     lines.append("")
 
     observations = list(
-        session.scalars(select(Observation).where(Observation.run_id == run.id).order_by(Observation.score.desc(), Observation.price))
+        session.scalars(
+            select(Observation)
+            .where(Observation.run_id == run.id)
+            .order_by(Observation.score.desc(), Observation.price)
+        )
     )
     run_items = list(session.scalars(select(RunItem).where(RunItem.run_id == run.id)))
     items = {i.id: i for i in session.scalars(select(Item))}
@@ -166,7 +183,11 @@ def build_report(session: Session, run: Run, plan: RunPlan | None, settings: Set
     for obs in observations:
         bucket = deals_by_item if obs.is_deal else others_by_item
         bucket.setdefault(obs.item_id, []).append(obs)
-    insights = {item_id: item_insight(session, items[item_id], now=run.started_at) for item_id in {o.item_id for o in observations} if item_id in items}
+    insights = {
+        item_id: item_insight(session, items[item_id], now=run.started_at)
+        for item_id in {o.item_id for o in observations}
+        if item_id in items
+    }
 
     # ---- deals -------------------------------------------------------------------------------
     lines.append(f"## 🔥 Deals worth a look ({len(deals_by_item)})")
@@ -180,7 +201,9 @@ def build_report(session: Session, run: Run, plan: RunPlan | None, settings: Set
         if item is None:
             continue
         best = offers[0]
-        lines.append(f"### {rank}. {safe(item.display_name)} - {money(best.price, currency)} at {safe(best.retailer_domain)}")
+        lines.append(
+            f"### {rank}. {safe(item.display_name)} - {money(best.price, currency)} at {safe(best.retailer_domain)}"
+        )
         lines.append(f"- {_offer_line(best, item, currency)}")
         lines.append(f"- Why: {safe(best.reasons) or 'meets your criteria'} · {_baseline_line(best, currency)}")
         history = _history_line(insights[item_id], run.id, currency) if item_id in insights else None
@@ -194,7 +217,9 @@ def build_report(session: Session, run: Run, plan: RunPlan | None, settings: Set
         cheaper_regular = [o for o in others_by_item.get(item_id, []) if o.comparable_price < best.comparable_price]
         if cheaper_regular:
             o = cheaper_regular[0]
-            lines.append(f"- Note: a non-promo listing is cheaper per unit: {_offer_line(o, item, currency)} - {link('link', o.url)}")
+            lines.append(
+                f"- Note: a non-promo listing is cheaper per unit: {_offer_line(o, item, currency)} - {link('link', o.url)}"
+            )
         lines.append("")
 
     lines.extend(_tracker_section(insights, items, run, settings))
@@ -206,7 +231,9 @@ def build_report(session: Session, run: Run, plan: RunPlan | None, settings: Set
     if found_no_deal:
         lines.append("| Item | Best price seen | Per unit | Shop | vs baseline | Lowest ever |")
         lines.append("|---|---|---|---|---|---|")
-        for item_id, offers in sorted(found_no_deal.items(), key=lambda kv: items.get(kv[0]).display_name if items.get(kv[0]) else ""):
+        for item_id, offers in sorted(
+            found_no_deal.items(), key=lambda kv: items.get(kv[0]).display_name if items.get(kv[0]) else ""
+        ):
             item = items.get(item_id)
             if item is None:
                 continue
@@ -214,7 +241,11 @@ def build_report(session: Session, run: Run, plan: RunPlan | None, settings: Set
             vs = f"{best.discount_pct:+.0f}%" if best.discount_pct is not None else "n/a"
             per_unit = f"{money(best.unit_price, currency)}/{best.unit}" if best.unit_price is not None else "-"
             ins = insights.get(item_id)
-            lowest = f"{money(ins.low, currency)}{ins.unit_label} ({ins.low_at.strftime('%d %b')})" if ins and ins.low is not None and ins.n_points > 1 else "-"
+            lowest = (
+                f"{money(ins.low, currency)}{ins.unit_label} ({ins.low_at:%d/%m/%Y})"
+                if ins and ins.low is not None and ins.n_points > 1
+                else "-"
+            )
             lines.append(
                 f"| {safe(item.display_name)} | {money(best.price, currency)} | {per_unit} | {link(best.retailer_domain, best.url)} | {vs} | {lowest} |"
             )
@@ -252,7 +283,9 @@ def build_report(session: Session, run: Run, plan: RunPlan | None, settings: Set
             lines.append(", ".join(safe(i.display_name) for i in plan.deferred))
             lines.append("")
         if plan.not_due:
-            lines.append(f"<details><summary>Not due this run ({len(plan.not_due)})</summary>\n\n{', '.join(safe(n) for n in plan.not_due)}\n\n</details>")
+            lines.append(
+                f"<details><summary>Not due this run ({len(plan.not_due)})</summary>\n\n{', '.join(safe(n) for n in plan.not_due)}\n\n</details>"
+            )
             lines.append("")
         for warning in plan.warnings:
             lines.append(f"> {safe(warning)}")
@@ -260,40 +293,3 @@ def build_report(session: Session, run: Run, plan: RunPlan | None, settings: Set
             lines.append("")
 
     return "\n".join(lines).rstrip() + "\n"
-
-
-def _plan_section(plan: RunPlan | None, run: Run, settings: Settings) -> list[str]:
-    lines: list[str] = []
-    if plan is None or not plan.groups:
-        lines.append("_Nothing to do._")
-        if plan is not None:
-            for warning in plan.warnings:
-                lines.append(f"> {safe(warning)}")
-        return lines
-    est = plan.estimate
-    lines.append(
-        f"Would check **{plan.items_planned}** item(s) in **{len(plan.groups)}** batch(es) with model `{settings.search_model}` "
-        f"(effort {settings.search_effort}, mode {settings.search_mode})."
-    )
-    lines.append(
-        f"Estimate: ~{est.web_searches} web searches, ~{est.input_tokens:,} input / ~{est.output_tokens:,} output tokens, "
-        f"**~${est.usd:.2f}** (rough - real cost is recorded after the run)."
-    )
-    lines.append("")
-    for group in plan.groups:
-        shops = ", ".join(r["domain"] for r in group.retailers) or "(open web)"
-        lines.append(f"### Batch {group.index}: {group.category} - {len(group.items)} item(s), max {group.max_uses} searches")
-        lines.append(f"- Shops: {safe(shops)}")
-        for item in group.items:
-            baseline = f" (baseline {item.baseline:.2f}/{item.baseline_basis})" if item.baseline else ""
-            lines.append(f"- {safe(item.display_name)} [{item.priority}]{baseline}")
-        lines.append("")
-    if plan.deferred:
-        lines.append(f"Deferred by batch cap: {', '.join(safe(i.display_name) for i in plan.deferred)}")
-        lines.append("")
-    if plan.not_due:
-        lines.append(f"Not due: {', '.join(safe(n) for n in plan.not_due)}")
-        lines.append("")
-    for warning in plan.warnings:
-        lines.append(f"> {safe(warning)}")
-    return lines

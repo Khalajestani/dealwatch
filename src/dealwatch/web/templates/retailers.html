@@ -3,12 +3,12 @@
 {% block content %}
 <h1>{{ icon('store') }} Retailers</h1>
 <p class="muted">Search mode is <strong>{{ settings.search_mode }}</strong>
-{% if settings.search_mode == 'allowlist' %}- the search engine only returns pages from <em>enabled</em> shops. <em>Disabled</em> = temporarily off, <em>blocked</em> = never use (and any offer from it is discarded).{% else %}- the whole web is searched except <em>blocked</em> shops; enabled shops are suggested to the model.{% endif %}
+{% if settings.search_mode == 'allowlist' %}: Claude may only search and open pages of <em>enabled</em> shops. <em>Disabled</em> = temporarily off, <em>blocked</em> = never use (and any offer from it is discarded).{% else %}: the whole web is searched except <em>blocked</em> shops; enabled shops are suggested to the model.{% endif %}
 Category tags limit which batches a shop is used for (empty = all categories). Change the mode in <a href="/settings">Settings</a>.</p>
 
 <details class="card">
   <summary>{{ icon('plus', 'sm') }} Add a shop</summary>
-  <form method="post" action="/retailers" class="grid" style="margin-top:10px">
+  <form method="post" action="/retailers" class="grid spaced">
     <div><label>Name</label><input type="text" name="name" placeholder="Blokker"></div>
     <div><label>Domain *</label><input type="text" name="domain" required placeholder="blokker.nl"></div>
     <div><label>Status</label><select name="status">{% for s in statuses %}<option value="{{ s }}">{{ s }}</option>{% endfor %}</select></div>
@@ -18,8 +18,8 @@ Category tags limit which batches a shop is used for (empty = all categories). C
   </form>
 </details>
 
-<table>
-  <tr><th>Shop</th><th>Status</th><th>Categories</th><th>Notes</th><th style="width:330px">Actions</th></tr>
+<div class="table-wrap"><table>
+  <tr><th>Shop</th><th>Status</th><th>Categories</th><th>Notes</th><th>Actions</th></tr>
   {% for r in retailers %}
   <tr class="{{ 'inactive' if r.status != 'enabled' else '' }}">
     <td><strong>{{ r.name }}</strong><div class="muted small">{{ r.domain }}</div></td>
@@ -31,10 +31,10 @@ Category tags limit which batches a shop is used for (empty = all categories). C
         {% for s in statuses if s != r.status %}
         <form method="post" action="/retailers/{{ r.id }}"><input type="hidden" name="action" value="{{ s }}"><button class="small {{ 'ok' if s == 'enabled' else ('danger' if s == 'blocked' else '') }}" type="submit">{{ icon('check' if s == 'enabled' else ('x' if s == 'blocked' else 'pause'), 'sm') }} {{ s }}</button></form>
         {% endfor %}
-        <form method="post" action="/retailers/{{ r.id }}" onsubmit="return confirm('Remove {{ r.domain }}?')"><input type="hidden" name="action" value="delete"><button class="small danger" type="submit">{{ icon('trash', 'sm') }} remove</button></form>
+        <form method="post" action="/retailers/{{ r.id }}" data-confirm="Remove {{ r.domain }}?"><input type="hidden" name="action" value="delete"><button class="small danger" type="submit">{{ icon('trash', 'sm') }} remove</button></form>
       </div>
       <details><summary class="small">{{ icon('edit', 'sm') }} edit</summary>
-        <form method="post" action="/retailers/{{ r.id }}" class="grid" style="margin-top:6px">
+        <form method="post" action="/retailers/{{ r.id }}" class="grid spaced">
           <input type="hidden" name="action" value="save">
           <div><label>Name</label><input type="text" name="name" value="{{ r.name }}"></div>
           <div><label>Sort order</label><input type="text" name="sort_order" value="{{ r.sort_order }}"></div>
@@ -46,5 +46,5 @@ Category tags limit which batches a shop is used for (empty = all categories). C
     </td>
   </tr>
   {% endfor %}
-</table>
+</table></div>
 {% endblock %}

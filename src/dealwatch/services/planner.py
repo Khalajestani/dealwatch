@@ -1,32 +1,24 @@
-"""Decide what to check this run and how to batch it so each LLM call covers several items.
+"""Decide what to check this run and how to batch it so each Claude run covers several items.
 
 Grouping strategy: due items are sorted by urgency, grouped by category (so one call searches similar
 shops), chunked to `group_size`, and capped at `max_groups_per_run`. Each group gets the retailer domains
-that serve its category, which become the web-search allowlist.
+that serve its category, which become the allowlist the app holds Claude's searches and page reads to.
 """
 
 from __future__ import annotations
 
-import math
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..config import estimate_usd
 from ..models import Item, Retailer
 from ..settings import Settings
 from .pricing import Baseline, baseline_for_item
 
 PRIORITY_RANK = {"need": 0, "stock_up": 1, "wishlist": 2}
 DUE_SLACK = timedelta(hours=12)  # so a weekly item checked Mon 07:05 is due again Mon 07:00
-
-# rough token model per batch, used only for the pre-run estimate
-_BASE_INPUT_TOKENS = 1_400
-_INPUT_TOKENS_PER_SEARCH = 1_500
-_OUTPUT_TOKENS_BASE = 900  # JSON scaffolding + adaptive thinking
-_OUTPUT_TOKENS_PER_ITEM = 220
 
 
 @dataclass
@@ -75,34 +67,20 @@ class PlannedGroup:
     retailers: list[dict]  # [{"name":..., "domain":...}] suggested shops
     allowed_domains: list[str]
     blocked_domains: list[str]
-    max_uses: int
-
-    def to_prompt_dict(self) -> dict:
-        return {
-            "max_uses": self.max_uses,
-            "retailers": self.retailers,
-            "items": [item.to_prompt_dict() for item in self.items],
-        }
+    max_uses: int  # web lookups (searches and page reads) allowed for the batch
 
     def to_dict(self) -> dict:
         return {
             "index": self.index,
             "category": self.category,
-            "items": [{"id": i.id, "name": i.display_name, "priority": i.priority, "baseline": i.baseline} for i in self.items],
+            "items": [
+                {"id": i.id, "name": i.display_name, "priority": i.priority, "baseline": i.baseline} for i in self.items
+            ],
             "retailers": self.retailers,
             "allowed_domains": self.allowed_domains,
             "blocked_domains": self.blocked_domains,
             "max_uses": self.max_uses,
         }
-
-
-@dataclass
-class CostEstimate:
-    api_requests: int = 0
-    web_searches: int = 0
-    input_tokens: int = 0
-    output_tokens: int = 0
-    usd: float = 0.0
 
 
 @dataclass
@@ -113,7 +91,6 @@ class RunPlan:
     enabled_retailers: list[str] = field(default_factory=list)
     blocked_retailers: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
-    estimate: CostEstimate = field(default_factory=CostEstimate)
 
     @property
     def items_planned(self) -> int:
@@ -127,7 +104,6 @@ class RunPlan:
             "enabled_retailers": self.enabled_retailers,
             "blocked_retailers": self.blocked_retailers,
             "warnings": self.warnings,
-            "estimate": asdict(self.estimate),
         }
 
 
@@ -152,17 +128,21 @@ def _chunks(seq: list, size: int) -> list[list]:
 
 def _to_planned_item(item: Item, baseline: Baseline) -> PlannedItem:
     return PlannedItem(
-        id=item.id, name=item.name, brand=item.brand, category=item.category, search_hints=item.search_hints,
-        unit=item.unit, bulk_ok=item.bulk_ok, priority=item.priority, target_price=item.target_price,
-        target_unit_price=item.target_unit_price, baseline=baseline.value, baseline_basis=baseline.basis,
-        baseline_n=baseline.n, lowest_seen=baseline.lowest,
+        id=item.id,
+        name=item.name,
+        brand=item.brand,
+        category=item.category,
+        search_hints=item.search_hints,
+        unit=item.unit,
+        bulk_ok=item.bulk_ok,
+        priority=item.priority,
+        target_price=item.target_price,
+        target_unit_price=item.target_unit_price,
+        baseline=baseline.value,
+        baseline_basis=baseline.basis,
+        baseline_n=baseline.n,
+        lowest_seen=baseline.lowest,
     )
-
-
-def active_item_views(session: Session, now: datetime) -> list[PlannedItem]:
-    """Light-weight views of every active, non-snoozed item (what direct deal sources receive each run)."""
-    items = session.scalars(select(Item).where(Item.active.is_(True)).order_by(Item.id))
-    return [_to_planned_item(i, Baseline()) for i in items if not (i.snooze_until and i.snooze_until > now)]
 
 
 def build_plan(session: Session, settings: Settings, *, now: datetime, force: bool = False) -> RunPlan:
@@ -180,7 +160,9 @@ def build_plan(session: Session, settings: Settings, *, now: datetime, force: bo
         plan.warnings.append("Nothing is due for a check right now.")
         return plan
     if settings.search_mode == "allowlist" and not enabled:
-        plan.warnings.append("No enabled retailers - enable at least one on the Retailers page, or switch search mode to 'open'.")
+        plan.warnings.append(
+            "No enabled retailers - enable at least one on the Retailers page, or switch search mode to 'open'."
+        )
         return plan
 
     due.sort(key=_urgency_key)
@@ -198,13 +180,17 @@ def build_plan(session: Session, settings: Settings, *, now: datetime, force: bo
     for _, chunk in raw_groups[settings.max_groups_per_run :]:
         plan.deferred.extend(_to_planned_item(i, Baseline()) for i in chunk)
     if plan.deferred:
-        plan.warnings.append(f"{len(plan.deferred)} due item(s) deferred to the next run by the batch cap ({settings.max_groups_per_run}).")
+        plan.warnings.append(
+            f"{len(plan.deferred)} due item(s) deferred to the next run by the batch cap ({settings.max_groups_per_run})."
+        )
 
     for index, (category, chunk) in enumerate(kept, start=1):
         serving = [r for r in enabled if r.serves(category)]
         if settings.search_mode == "allowlist" and not serving:
             serving = enabled
-            plan.warnings.append(f"No enabled retailer is tagged for category '{category}'; using all enabled retailers for that batch.")
+            plan.warnings.append(
+                f"No enabled retailer is tagged for category '{category}'; using all enabled retailers for that batch."
+            )
         planned_items = [
             _to_planned_item(i, baseline_for_item(session, i.id, before=now, window_days=settings.baseline_window_days))
             for i in chunk
@@ -222,26 +208,4 @@ def build_plan(session: Session, settings: Settings, *, now: datetime, force: bo
             )
         )
 
-    plan.estimate = estimate_plan(plan.groups, settings)
     return plan
-
-
-def estimate_plan(groups: list[PlannedGroup], settings: Settings) -> CostEstimate:
-    est = CostEstimate()
-    for group in groups:
-        n_items = len(group.items)
-        searches = min(group.max_uses, math.ceil(n_items * 1.3))
-        est.api_requests += 1
-        est.web_searches += searches
-        est.input_tokens += _BASE_INPUT_TOKENS + searches * _INPUT_TOKENS_PER_SEARCH
-        est.output_tokens += _OUTPUT_TOKENS_BASE + n_items * _OUTPUT_TOKENS_PER_ITEM
-    est.usd = round(
-        estimate_usd(
-            settings.search_model,
-            input_tokens=est.input_tokens,
-            output_tokens=est.output_tokens,
-            web_searches=est.web_searches,
-        ),
-        3,
-    )
-    return est

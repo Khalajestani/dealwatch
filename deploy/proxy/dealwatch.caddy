@@ -1,0 +1,4 @@
+dealwatch.home.arpa {
+	import private_site
+	reverse_proxy dealwatch:8000
+}

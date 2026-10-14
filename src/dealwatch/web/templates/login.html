@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Sign in · Dealwatch{% endblock %}
+{% block header_actions %}{% endblock %}
+{% block content %}
+<div class="card narrow">
+  <h2>Sign in</h2>
+  <form method="post" action="/login" class="grid">
+    {% if error %}<p class="flash err wide">{{ error }}</p>{% endif %}
+    <input type="hidden" name="next" value="{{ next }}">
+    <div class="wide"><label for="password">Password</label><input type="password" id="password" name="password" required autofocus autocomplete="current-password"></div>
+    <div class="wide actions"><button class="primary" type="submit">Sign in</button></div>
+  </form>
+</div>
+{% endblock %}

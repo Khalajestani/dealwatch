@@ -47,7 +47,7 @@ nav.pills a.active { background: var(--accent-soft); color: var(--accent-ink); b
 
 /* ---------- cards / stats ---------- */
 .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 16px 18px; margin-bottom: 16px; }
-.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 16px; }
 .cards .card { margin: 0; display: flex; gap: 12px; align-items: flex-start; }
 .stat-icon { width: 36px; height: 36px; border-radius: 9px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent-ink); flex: none; }
 .stat-icon.ok { background: var(--ok-soft); color: var(--ok); } .stat-icon.warn { background: var(--warn-soft); color: var(--warn); }
@@ -77,7 +77,7 @@ tr.deal td { background: var(--deal); }
 .badge.ok, .badge.enabled, .badge.success, .badge.due, .badge.found { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
 .badge.warn, .badge.disabled, .badge.partial, .badge.running, .badge.snoozed { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
 .badge.danger, .badge.blocked, .badge.failed, .badge.error { background: var(--danger-soft); color: var(--danger); border-color: transparent; }
-.badge.info, .badge.planned { background: var(--info-soft); color: var(--info); border-color: transparent; }
+.badge.info { background: var(--info-soft); color: var(--info); border-color: transparent; }
 .badge.accent { background: var(--accent-soft); color: var(--accent-ink); border-color: transparent; }
 .badge.deal { background: var(--warn); color: #fff; border-color: transparent; }
 .badge.need { background: var(--danger-soft); color: var(--danger); border-color: transparent; }
@@ -105,7 +105,7 @@ form.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px,
 form.grid .wide { grid-column: 1 / -1; }
 label { display: block; font-size: 12.5px; color: var(--muted); margin-bottom: 4px; font-weight: 500; }
 label.inline { display: inline-flex; align-items: center; gap: 6px; color: var(--text); font-size: 14px; font-weight: 400; }
-input[type=text], input[type=search], input[type=url], input[type=number], select, textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--card); color: var(--text); font: inherit; }
+input[type=text], input[type=search], input[type=url], input[type=number], input[type=password], select, textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--card); color: var(--text); font: inherit; }
 input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
 input[type=file] { width: 100%; padding: 14px; border: 2px dashed var(--line-strong); border-radius: 10px; background: var(--bg); color: var(--muted); }
 textarea { min-height: 60px; }
@@ -154,7 +154,7 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; 
 .settings-group { margin-bottom: 20px; }
 .settings-row { display: grid; grid-template-columns: 260px 1fr; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); align-items: start; }
 .settings-row:last-child { border-bottom: 0; }
-@media (max-width: 720px) { .settings-row { grid-template-columns: 1fr; } main, .topbar { padding-left: 12px; padding-right: 12px; } th, td { padding: 8px; } }
+@media (max-width: 720px) { .settings-row { grid-template-columns: 1fr; } main, .topbar { padding-left: 16px; padding-right: 16px; } th, td { padding: 8px; } .brand-sub { display: none; } nav.pills a { padding: 6px 10px; } }
 .warnbox { border-left: 3px solid var(--warn); background: var(--deal); padding: 8px 12px; border-radius: 6px; margin: 10px 0; }
 .delta-down { color: var(--ok); font-variant-numeric: tabular-nums; } .delta-up { color: var(--danger); font-variant-numeric: tabular-nums; }
 
@@ -180,3 +180,30 @@ pre { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; 
 .viz-tip-head { color: var(--muted); margin-bottom: 2px; } .viz-tip-row strong { font-variant-numeric: tabular-nums; }
 .viz-spark { vertical-align: middle; margin: 0; } .viz-spark-line { fill: none; stroke: var(--viz-s1); stroke-width: 1.5; stroke-linejoin: round; }
 a.card { color: var(--text); } a.card:hover { text-decoration: none; border-color: var(--line-strong); }
+
+/* ---------- small helpers (no inline styles: the content security policy allows none for scripts, and keeps it tidy) ---------- */
+.stat-sm { font-size: 16px; } .flush { margin-top: 0; } .spaced { margin-top: 14px; } .flash-in { margin: 8px 0 0; }
+.thumb-left { float: left; margin-right: 10px; } .inline-form { display: inline; } .narrow { max-width: 420px; margin: 24px auto; }
+.table-wrap { overflow-x: auto; margin-bottom: 16px; } .table-wrap table { margin-bottom: 0; }
+.viz-svg { max-width: 100%; height: auto; }
+
+/* ---------- talk box: type, talk or add a photo ---------- */
+.talk { margin-bottom: 10px; }
+.talk-field { position: relative; }
+.talk-field textarea { min-height: 90px; padding-right: 52px; resize: vertical; }
+.mic-btn { position: absolute; right: 8px; top: 8px; width: 38px; height: 38px; padding: 0; justify-content: center; border-radius: 999px; }
+.mic-btn.listening { background: var(--danger); border-color: var(--danger); color: #fff; animation: pulse 1.2s infinite; }
+@keyframes pulse { 50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--danger) 25%, transparent); } }
+.voice-status { min-height: 18px; margin-top: 4px; }
+.talk-photo .preview { max-height: 180px; }
+form.busy button[type=submit] { opacity: .6; pointer-events: none; }
+.busy-note { color: var(--muted); font-size: 13px; }
+
+/* ---------- Ask ---------- */
+.conversation { display: flex; flex-direction: column; gap: 10px; }
+.conversation .question, .conversation .answer { max-width: 85%; padding: 9px 13px; border-radius: 14px; white-space: pre-wrap; font-size: 14.5px; }
+.conversation .question { align-self: flex-end; background: var(--accent); color: #fff; border-bottom-right-radius: 4px; }
+.conversation .answer { align-self: flex-start; background: var(--bg); border: 1px solid var(--line); border-bottom-left-radius: 4px; }
+.conversation-actions { align-self: flex-end; }
+.examples h3 { margin-top: 18px; } .examples ul { padding-left: 18px; margin: 6px 0 0; }
+.examples li { cursor: pointer; color: var(--accent-ink); margin: 3px 0; }

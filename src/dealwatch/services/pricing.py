@@ -40,34 +40,22 @@ class Baseline:
 
 
 def baseline_for_item(session: Session, item_id: int, *, before: datetime, window_days: int) -> Baseline:
-    """The item's 'normal' price: median of the best price seen per check (price points) inside the window,
-    strictly before `before` (so a run never compares against itself).
-
-    Per-unit prices are used when the history has them (fair across pack sizes), else pack prices.
-    Falls back to raw observations when no price points exist yet (legacy data).
-    """
+    """The item's normal price: median of the best price seen per check (price points) inside the window, strictly
+    before `before`, so a check never compares against itself. Per unit when the history has unit prices (fair
+    across pack sizes), else per pack."""
     since = before - timedelta(days=window_days)
     points = session.execute(
-        select(PricePoint.min_price, PricePoint.min_unit_price)
-        .where(PricePoint.item_id == item_id, PricePoint.observed_at >= since, PricePoint.observed_at < before)
+        select(PricePoint.min_price, PricePoint.min_unit_price).where(
+            PricePoint.item_id == item_id, PricePoint.observed_at >= since, PricePoint.observed_at < before
+        )
     ).all()
-    if points:
-        unit_values = [u for _, u in points if u is not None]
-        if unit_values:
-            return Baseline(value=round(median(unit_values), 4), basis="unit", n=len(unit_values), lowest=min(unit_values))
-        pack_values = [p for p, _ in points if p is not None]
-        return Baseline(value=round(median(pack_values), 4), basis="pack", n=len(pack_values), lowest=min(pack_values))
-    rows = session.execute(
-        select(Observation.price, Observation.unit_price)
-        .where(Observation.item_id == item_id, Observation.observed_at >= since, Observation.observed_at < before)
-    ).all()
-    if not rows:
-        return Baseline()
-    unit_values = [u for _, u in rows if u is not None]
+    unit_values = [u for _, u in points if u is not None]
     if unit_values:
         return Baseline(value=round(median(unit_values), 4), basis="unit", n=len(unit_values), lowest=min(unit_values))
-    pack_values = [p for p, _ in rows if p is not None]
-    return Baseline(value=round(median(pack_values), 4), basis="pack", n=len(pack_values), lowest=min(pack_values))
+    pack_values = [p for p, _ in points]
+    if pack_values:
+        return Baseline(value=round(median(pack_values), 4), basis="pack", n=len(pack_values), lowest=min(pack_values))
+    return Baseline()
 
 
 @dataclass
@@ -99,11 +87,7 @@ def assess_offer(
     result = Assessment()
 
     # 1. versus our own history (the most honest signal once it exists)
-    comparable: float | None
-    if baseline.basis == "unit":
-        comparable = unit_price_value
-    else:
-        comparable = price
+    comparable = unit_price_value if baseline.basis == "unit" else price
     if baseline.value and comparable is not None:
         result.discount_vs_baseline = round((baseline.value - comparable) / baseline.value * 100, 1)
         if result.discount_vs_baseline >= settings.min_discount_pct:
@@ -121,7 +105,11 @@ def assess_offer(
     if item.target_price is not None and price <= item.target_price:
         result.under_target = True
         result.reasons.append(f"at/below your target {item.target_price:.2f}")
-    if item.target_unit_price is not None and unit_price_value is not None and unit_price_value <= item.target_unit_price:
+    if (
+        item.target_unit_price is not None
+        and unit_price_value is not None
+        and unit_price_value <= item.target_unit_price
+    ):
         result.under_target = True
         result.reasons.append(f"at/below your unit target {item.target_unit_price:.2f}/{item.unit or 'unit'}")
 
@@ -174,5 +162,4 @@ def summarize_offers(observations: list[Observation]) -> dict:
         "best_promo_type": best.promo_type or "none",
         "promo_count": sum(1 for o in observations if o.promo_type and o.promo_type != "none"),
         "deal_count": sum(1 for o in observations if o.is_deal),
-        "sources": ",".join(sorted({o.source or "llm_search" for o in observations})),
     }

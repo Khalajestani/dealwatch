@@ -4,27 +4,69 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from collections.abc import Iterable
 from dataclasses import dataclass
 from difflib import SequenceMatcher
-from typing import Iterable
 
 from ..models import Item
 
 SUGGEST_THRESHOLD = 0.45  # show as "similar" while typing / on the review card
 DUPLICATE_THRESHOLD = 0.8  # treat as a likely duplicate (needs explicit confirmation)
 
-_STOPWORDS = {"the", "a", "an", "of", "de", "het", "een", "en", "and", "for", "voor", "met", "with", "x", "stuks", "pack", "pak", "st", "per"}
+_STOPWORDS = {
+    "the",
+    "a",
+    "an",
+    "of",
+    "de",
+    "het",
+    "een",
+    "en",
+    "and",
+    "for",
+    "voor",
+    "met",
+    "with",
+    "x",
+    "stuks",
+    "pack",
+    "pak",
+    "st",
+    "per",
+}
 # Dutch -> English product words so names typed in either language match.
 _SYNONYMS: dict[str, str] = {
-    "keukenrol": "kitchen towels", "keukenrollen": "kitchen towels", "keukenpapier": "kitchen towels",
-    "toiletpapier": "toilet paper", "wc papier": "toilet paper", "wc-papier": "toilet paper", "wcpapier": "toilet paper",
-    "vaatwastabletten": "dishwasher tablets", "vaatwasmiddel": "dishwasher tablets", "vaatwasser": "dishwasher",
-    "wasmiddel": "laundry detergent", "waspods": "laundry pods", "wasverzachter": "fabric softener",
-    "afwasmiddel": "dish soap", "allesreiniger": "all-purpose cleaner", "schoonmaakmiddel": "cleaner",
-    "tandpasta": "toothpaste", "tandenborstel": "toothbrush", "shampoo": "shampoo", "deodorant": "deodorant",
-    "luiers": "diapers", "koffiebonen": "coffee beans", "koffie": "coffee", "thee": "tea",
-    "accuboormachine": "cordless drill", "boormachine": "drill", "schroevendraaier": "screwdriver",
-    "batterijen": "batteries", "lampen": "bulbs", "zakken": "bags", "vuilniszakken": "bin bags",
+    "keukenrol": "kitchen towels",
+    "keukenrollen": "kitchen towels",
+    "keukenpapier": "kitchen towels",
+    "toiletpapier": "toilet paper",
+    "wc papier": "toilet paper",
+    "wc-papier": "toilet paper",
+    "wcpapier": "toilet paper",
+    "vaatwastabletten": "dishwasher tablets",
+    "vaatwasmiddel": "dishwasher tablets",
+    "vaatwasser": "dishwasher",
+    "wasmiddel": "laundry detergent",
+    "waspods": "laundry pods",
+    "wasverzachter": "fabric softener",
+    "afwasmiddel": "dish soap",
+    "allesreiniger": "all-purpose cleaner",
+    "schoonmaakmiddel": "cleaner",
+    "tandpasta": "toothpaste",
+    "tandenborstel": "toothbrush",
+    "shampoo": "shampoo",
+    "deodorant": "deodorant",
+    "luiers": "diapers",
+    "koffiebonen": "coffee beans",
+    "koffie": "coffee",
+    "thee": "tea",
+    "accuboormachine": "cordless drill",
+    "boormachine": "drill",
+    "schroevendraaier": "screwdriver",
+    "batterijen": "batteries",
+    "lampen": "bulbs",
+    "zakken": "bags",
+    "vuilniszakken": "bin bags",
 }
 
 
@@ -69,7 +111,15 @@ class Match:
         return self.score >= DUPLICATE_THRESHOLD
 
 
-def find_similar(name: str, brand: str | None, items: Iterable[Item], *, limit: int = 5, threshold: float = SUGGEST_THRESHOLD, exclude_id: int | None = None) -> list[Match]:
+def find_similar(
+    name: str,
+    brand: str | None,
+    items: Iterable[Item],
+    *,
+    limit: int = 5,
+    threshold: float = SUGGEST_THRESHOLD,
+    exclude_id: int | None = None,
+) -> list[Match]:
     query_full = f"{brand or ''} {name or ''}".strip()
     if not query_full:
         return []

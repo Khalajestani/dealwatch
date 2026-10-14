@@ -1,73 +1,71 @@
-# Dealwatch - context for AI agents and future me
+# Dealwatch: context for agents
 
-Personal deal watcher for one household (NL). Users add shopping/wish-list items; a few times a week the app asks
-Claude (server-side web search, domain-restricted) for current prices/promos per batch of items, stores every
-observation, and reports real deals versus each item's own price history. Read `README.md` first, then
-`docs/ARCHITECTURE.md`. `docs/ROADMAP.md` lists what to build next; `docs/DECISIONS.md` explains why things are the way they are.
+Personal deal watcher for one household (NL). Items on a shopping and wish list are checked daily, when due, by
+Claude (Claude Code on the owner's plan, web search held to allowed shops); every offer is stored and real deals are
+reported against each item's own price history. Runs on the Raspberry Pi beside ENDUR∆NCE and TOOL·E. Read
+`README.md`, then `docs/architecture.md`; `docs/decisions.md` says why, `docs/requirements.md` what was asked.
+
+## Owner rules
+
+- **No payment outside the Claude subscription.** No API key, no paid service. Claude only through
+  `services/claude.py` (plan token, paid credentials stripped, `tools` limited, limit stops the run).
+- **Private**: home network and VPN only. **Clean and lean**: one way to do each thing; remove what a change makes
+  obsolete, code and docs, in the same change. **The owner types every secret.**
+- No em-dashes in UI text or docs. Dates shown dd/mm/yyyy, stored ISO/UTC. Metric units.
 
 ## Stack and commands
 
-- Python 3.12, uv, FastAPI + Jinja2 (server-rendered, no JS build), SQLAlchemy 2 + SQLite, APScheduler 3, Typer, `anthropic` SDK 1.x.
-- `uv sync` · `uv run pytest` · `uv run dealwatch serve` · `uv run dealwatch run --fake` · `uv run dealwatch plan`
-- Try the UI without credits: `DEALWATCH_FAKE_LLM=1 uv run dealwatch serve`.
+- Python 3.12, uv, FastAPI + Jinja2 (server-rendered, no JS build), SQLAlchemy 2 + SQLite, APScheduler 3,
+  claude-agent-sdk, pydantic-settings, pytest, ruff.
+- `make dev` · `make test` · `make lint` · `make format` · `make pi-ship` · `make pi-status`
 - Data lives in `./data` (git-ignored). Deleting `data/dealwatch.db` resets everything; retailers re-seed on start.
 
 ## Conventions
 
-- **Never call the real API from tests.** Use `FakeSearchClient` or a stub client object (see `tests/test_llm.py`).
-  Anything that spends credits must be an explicit user action (Run now / `dealwatch run`).
-- **All datetimes are naive UTC** in the DB; convert only for display (`report.local_time`, `localtime` filter).
-- **Settings**: add a field with a default on `settings.Settings` and a `SettingSpec` in `settings.SPECS`. The settings
-  page, validation and CLI pick it up automatically.
-- **Schema changes**: add the column to the model; `db.init_db()` adds missing nullable columns with `ALTER TABLE`.
-  Anything more (renames, NOT NULL) needs a real migration step - keep it simple, this is a personal tool.
-- **Prompt caching**: `prompts.SYSTEM_PROMPT` must stay static (no dates, no per-run data). Per-run data goes in the
-  user message (`build_user_message`).
-- **Model-supplied text is untrusted**: escape it in reports (`report.safe`, `report.link`) and templates (autoescape on).
-- **Structured output schema** (`prompts.OUTPUT_SCHEMA`): every object needs `additionalProperties: false` and all
-  properties listed in `required`; nullable = `anyOf [type, null]`; no `minimum`/`maximum`/`pattern`.
-- Web search tool: `allowed_domains` and `blocked_domains` are mutually exclusive - the planner picks one based on
-  `search_mode`. Domains must be bare ASCII (`domains.normalize_domain` / `is_valid_domain`).
-- Keep docs in sync: README (user-facing), ARCHITECTURE (how), DECISIONS (why), ROADMAP (next). Update them in the same change.
+- **Never reach Claude from tests.** Use `FakeSearchClient`, `FakeClaude` or the `claude_code` fixture
+  (`tests/conftest.py`).
+- **Claude Code options** live in `services/claude.py` only. Keep `setting_sources=[]`, `permission_mode="dontAsk"`,
+  `strict_mcp_config=True`, `tools=[]` unless a `WebPolicy` adds WebSearch and WebFetch, and the paid-credential strip.
+- **Web access** is decided by `WebPolicy.decide` (the PreToolUse hook), not by the prompt. The runner drops offers
+  outside the batch's shops again when storing.
+- **Tools** are typed functions with an `Args:` docstring (`services/tool.py`). They return short strings, raise
+  `ValueError` for the model to correct, and never delete.
+- **Items are written only through `items.py`** (forms and Ask). Reads shared by pages and Ask go in `queries.py`.
+- **All datetimes are naive UTC** in the DB; convert for display only (`report.local_time`, `localtime` filter).
+- **Settings**: a field with a default on `settings.Settings` and a `SettingSpec` in `SPECS`; the page and
+  validation pick it up.
+- **Schema changes**: add the column to the model; `db.init_db()` adds missing nullable columns. Anything more needs
+  a real migration step.
+- **Model and web text is untrusted**: escape it in reports (`report.safe`, `report.link`); templates autoescape.
+- **No inline scripts or handlers** (the CSP allows scripts from the app only): use `data-confirm`, `data-busy`
+  and `static/app.js`.
+- Keep docs in sync in the same change: README (user-facing), architecture (how), decisions (why), requirements
+  (what was asked), assistant and raspberry-pi (operations), roadmap (next).
 
 ## Where things happen
 
 | Question | Look in |
 |---|---|
 | Which items are checked and how they are batched | `services/planner.py` (`is_due`, `build_plan`) |
-| The exact API request (tools, schema, effort, caching) | `services/llm.py` (`build_request`) and `services/prompts.py` |
-| pause_turn continuation, usage accounting, error mapping | `services/llm.py` (`AnthropicSearchClient.search_group`) |
+| The Claude run for a batch, its instructions and `record_item` | `services/search.py` |
+| Plan-only run, web policy hook, errors as sentences | `services/claude.py` |
 | What counts as a deal | `services/pricing.py` (`assess_offer`, `baseline_for_item`) |
-| Run lifecycle, status, per-batch persistence, domain post-filter | `services/runner.py` |
-| Report text | `services/report.py` |
-| Cron schedule | `services/scheduler.py`, setting `schedule_cron` |
-| Cost estimate and price table | `services/planner.py` (`estimate_plan`), `config.py` (`MODEL_PRICES`) |
-| Price points (the tracked series) | `services/runner.py` (`_record_price_points`), `services/pricing.py` (`summarize_offers`) |
-| Tracker stats, movers, per-shop breakdown | `services/insights.py` |
-| Direct deal sources (AH/Jumbo/Lidl adapters go here) | `services/sources/__init__.py` (`DealSource`, `SOURCES`, `FakeSource`), `runner._run_sources` |
-| Charts | `web/charts.py` (SVG), `web/static/tracker.js` (hover), `.viz` tokens in `style.css` |
-| CSV / JSON exports | `web/app.py` (`/export/{table}.csv`, `/api/items/{id}/prices`), `cli.py export` |
-| Web routes | `web/app.py` (single file, grouped by page) |
+| A check from plan to report, domain filter, stopping on the limit | `services/runner.py` |
+| Smart entry | `services/extract.py`, `templates/item_new.html`, `item_review.html` |
+| Ask | `services/ask.py`, `services/ask.md`, `templates/ask.html` |
+| Schedule and backups | `services/scheduler.py`, `backup.py` |
+| Login | `security.py` |
+| Charts | `web/charts.py` (SVG), `static/tracker.js`, `.viz` tokens in `style.css` |
+| Deploy | `Dockerfile`, `deploy/`, `docs/raspberry-pi.md` |
 
 ## Gotchas
 
-- `run.cost_usd` is an estimate from `config.MODEL_PRICES` - update the table when Anthropic prices change.
-- Only one run per process (`runner._run_lock`). The scheduler and the UI both go through `execute_run`.
-- With `search_trim_response` on, the API omits raw search result blocks from responses (cheaper); the model's queries
-  are still logged when present. Turn it off to debug what the model saw.
-- `claude-haiku-4-5` (and other pre-4.6 models) falls back to the basic `web_search_20250305` tool without effort/thinking
-  params (`llm.model_profile`).
-- Structured outputs plus server tools: the JSON is the final text block; `llm.final_text` picks the last text block
-  containing `{` and `extract_json` tolerates fences/prose.
-- The planner's `DUE_SLACK` (12h) makes weekly items due slightly early so a fixed weekly schedule doesn't skip them.
-- Price points have `observed_at = run.started_at`; baselines use points strictly before the run, so a run never
-  compares against itself. Tests pass explicit `now=` values to simulate weeks passing.
-- A new source adapter must only return offers from its own domain (others are dropped) and runs only when that
-  retailer is `enabled` on the Retailers page. Keep adapters free of network calls at import time; test with fixtures.
-- Charts: keep to the two series colours (`--viz-s1/--viz-s2`) - adding a third series needs a re-validated palette.
-- UI conventions: server-rendered pages, no build step. Icons are inline SVG symbols in `_icons.html` used via
-  `{{ icon('name', 'sm') }}`; category icon/colour come from `models.CATEGORY_ICON` + `.cat-<key>` CSS; badges use
-  `.badge.<state>`. Keep colour restrained: accent for actions, semantic colours only for states. `static/app.js` holds
-  the few progressive enhancements (everything works without JS except live similar-items suggestions).
-- Uploaded photos live in `data/uploads/<uuid>.jpg` (downscaled JPEG); `image_path` is validated against that pattern.
-- Extraction requests share `llm.complete_with_continuations` and `describe_api_error` with the search client.
+- Only one check per process (`runner._run_lock`); batches run one after another (memory on the Pi).
+- `CannotRun` (plan limit or failed sign-in) stops the rest of a check; other `Unavailable` errors fail one batch.
+- Whatever `record_item` stored is kept when a batch is cut short; only unrecorded items become errors.
+- The planner's `DUE_SLACK` (12h) makes items due slightly early so a fixed daily schedule does not skip a day.
+- Price points have `observed_at = run.started_at`; baselines use points strictly before the check. Tests pass
+  explicit `now=` values to simulate weeks passing.
+- Claude Code's models are named `haiku`, `sonnet`, `opus`; the Settings choices and the Ask picker use these.
+- The container's clock is UTC; anything shown or named by date uses the time zone from Settings.
+- Uploaded photos live in `data/uploads/<uuid>.jpg` (shrunk JPEG); `image_path` is checked against that pattern.

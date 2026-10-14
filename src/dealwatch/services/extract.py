@@ -1,147 +1,147 @@
-"""Turn a product link or a product photo into a pre-filled item (name, brand, category, pack, hints).
+"""Smart entry: words (typed or spoken), a product photo and/or a product link become one pre-filled item.
 
-`AnthropicExtractor` uses Claude with the web fetch tool (links) or vision (photos) and structured JSON output.
-`FakeExtractor` derives fields from the URL/filename for tests and fake mode. Photos are downscaled to JPEG first.
+One Claude run with no tools; when the words hold a product link it may also open that page (and search that shop),
+nothing else. The reply is JSON in plain text, checked here. Nothing is stored: the review card shows the draft and
+the owner confirms. Photos are rotated, shrunk and re-encoded as JPEG first (`prepare_image`).
 """
 
 from __future__ import annotations
 
-import base64
 import io
+import json
 import logging
 import re
-from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any
 
-import anthropic
 from PIL import Image, ImageOps, UnidentifiedImageError
 from pydantic import BaseModel, ValidationError, field_validator
 
-from ..domains import domain_of_url
-from ..models import CATEGORY_KEYS, UNITS
-from ..settings import Settings
-from .llm import UsageTotals, complete_with_continuations, describe_api_error, extract_json, model_profile
+from ..domains import domain_of_url, is_valid_domain
+from ..models import CATEGORY_KEYS, PRIORITY_KEYS, UNITS
+from .claude import Claude, Unavailable, WebPolicy
 
 log = logging.getLogger(__name__)
 
-MAX_IMAGE_SIDE = 1568  # Anthropic's recommended long edge
+MAX_IMAGE_SIDE = 1568  # as much as the model reads
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
+# Reading a brand and pack size off a label or a page is worth the balanced model; low effort keeps it quick.
+MODEL, EFFORT = "sonnet", "low"
+NOTHING_FOUND = "Could not tell which product this is. Add a few words, or try the photo closer with the label in view."
+URL_RE = re.compile(r"https?://[^\s<>\"']+")
 
-EXTRACT_SYSTEM_PROMPT = """You turn a product page or a product photo into an entry for a Dutch household's shopping list.
-Answer ONLY with JSON matching the schema.
+SYSTEM = f"""You turn what a person typed or said, a product photo and/or a product page into ONE entry for a Dutch
+household's shopping list, which a price watcher then checks at Dutch shops.
 
-Fields:
-- name: generic product name in English, without the brand (e.g. "Kitchen towels", "Dishwasher tablets", "Cordless drill").
-- brand: the brand as printed (e.g. "Page", "Dreft", "Bosch"), or null.
-- category: one of household, personal_care, groceries, health, tools_diy, electronics, home_garden, pets_baby, other.
-- search_hints: short Dutch keywords that find this exact product and pack in a shop search (variant, pack size, model
-  number), e.g. "keukenpapier XXL 8 rollen" or "GSR 12V-35 2 accu's". Null if nothing specific is visible.
-- unit: the unit to compare prices per, one of piece, roll, wash, tablet, capsule, bag, ml, l, g, kg, m, pair - or null.
-- pack_quantity: how many of that unit are in the pack (8 rolls, 500 ml, 60 tablets) or null if not visible.
-- price: the price shown, as a number in EUR, or null. currency: "EUR" or the shown currency, or null.
-- retailer_domain: the shop's bare domain if this is a shop page, else null.
-- product_title: the product title exactly as displayed, or a short description of what the photo shows.
-- confidence: 0-1, how sure you are about name/brand/pack.
-- summary: one short English sentence: what you saw and any caveat (e.g. "label partly hidden", "page is a category listing").
-If there is no identifiable product, set name to "" and explain in summary. Never invent a brand, pack size or price."""
+Reply with only one JSON object, no other text, with exactly these keys:
+"name": generic product name in English, without the brand, e.g. "Kitchen towels", "Dishwasher tablets", "Cordless drill".
+"brand": the brand as printed or said, e.g. "Page", "Dreft", "Bosch".
+"category": one of {", ".join(CATEGORY_KEYS)}.
+"priority": "need" when they are running low or need it soon, "wishlist" for something they would buy only at a great
+  price, else "stock_up". One of {", ".join(PRIORITY_KEYS)}.
+"search_hints": short Dutch keywords that find this exact product and pack in a shop search (variant, pack size,
+  model number), e.g. "keukenpapier XXL 8 rollen" or "GSR 12V-35 2 accu's".
+"unit": the unit to compare prices per, one of {", ".join(UNITS)}.
+"pack_quantity": how many of that unit are in the pack (8 rolls, 500 ml, 60 tablets).
+"target_price": the price per pack in EUR at or under which they want to buy, only if they said one.
+"target_unit_price": the price per unit in EUR at or under which they want to buy, only if they said one
+  ("under 30 cents a roll" is 0.30).
+"notes": anything else they said that matters for buying it, in a few words.
+"price": the price shown on the photo or page, in EUR.
+"retailer_domain": the shop's bare domain if a shop page or shop label is shown.
+"product_title": the product title as displayed, or a short description of what the photo shows.
+"confidence": 0 to 1, how sure you are about name, brand and pack.
+"summary": one short English sentence on what you saw and any caveat, e.g. "label partly hidden".
 
-_nullable_str = {"anyOf": [{"type": "string"}, {"type": "null"}]}
-_nullable_num = {"anyOf": [{"type": "number"}, {"type": "null"}]}
-EXTRACT_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "name": {"type": "string"},
-        "brand": _nullable_str,
-        "category": {"type": "string", "enum": CATEGORY_KEYS},
-        "search_hints": _nullable_str,
-        "unit": {"anyOf": [{"type": "string", "enum": UNITS}, {"type": "null"}]},
-        "pack_quantity": _nullable_num,
-        "price": _nullable_num,
-        "currency": _nullable_str,
-        "retailer_domain": _nullable_str,
-        "product_title": _nullable_str,
-        "confidence": {"type": "number"},
-        "summary": {"type": "string"},
-    },
-    "required": ["name", "brand", "category", "search_hints", "unit", "pack_quantity", "price", "currency", "retailer_domain", "product_title", "confidence", "summary"],
-    "additionalProperties": False,
-}
+Use null for anything not shown or said; never present a guess as a label's text, and never invent a brand, pack
+size or price. If there is no identifiable product, set name to "" and say why in summary. Metric units."""
 
 
 class ExtractedItem(BaseModel):
     name: str = ""
     brand: str | None = None
     category: str = "other"
+    priority: str = "stock_up"
     search_hints: str | None = None
     unit: str | None = None
     pack_quantity: float | None = None
+    target_price: float | None = None
+    target_unit_price: float | None = None
+    notes: str | None = None
     price: float | None = None
-    currency: str | None = None
     retailer_domain: str | None = None
     product_title: str | None = None
     confidence: float = 0.5
     summary: str = ""
 
-    @field_validator("brand", "search_hints", "product_title", "currency", mode="before")
+    @field_validator("brand", "search_hints", "notes", "product_title", "retailer_domain", mode="before")
     @classmethod
-    def _strip_optional(cls, value):
-        if value is None:
+    def _optional_text(cls, value: Any) -> str | None:
+        if not isinstance(value, str | int | float) or str(value).strip().lower() in ("", "null", "unknown"):
             return None
-        value = str(value).strip()
-        return value or None
+        return str(value).strip()[:300]
 
     @field_validator("name", "summary", mode="before")
     @classmethod
-    def _strip_required(cls, value):
-        return str(value).strip()[:300] if value is not None else ""
+    def _text(cls, value: Any) -> str:
+        return str(value).strip()[:200] if value is not None else ""
 
-    @field_validator("category")
+    @field_validator("category", mode="before")
     @classmethod
-    def _category(cls, value):
+    def _category(cls, value: Any) -> str:
         return value if value in CATEGORY_KEYS else "other"
 
-    @field_validator("unit")
+    @field_validator("priority", mode="before")
     @classmethod
-    def _unit(cls, value):
+    def _priority(cls, value: Any) -> str:
+        return value if value in PRIORITY_KEYS else "stock_up"
+
+    @field_validator("unit", mode="before")
+    @classmethod
+    def _unit(cls, value: Any) -> str | None:
         return value if value in UNITS else None
 
-    @field_validator("confidence")
+    @field_validator("pack_quantity", "target_price", "target_unit_price", "price", mode="before")
     @classmethod
-    def _confidence(cls, value):
-        return max(0.0, min(1.0, float(value)))
+    def _positive(cls, value: Any) -> float | None:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        return number if number > 0 else None
 
-    @field_validator("pack_quantity", "price")
+    @field_validator("confidence", mode="before")
     @classmethod
-    def _positive(cls, value):
-        return float(value) if value is not None and value > 0 else None
+    def _confidence(cls, value: Any) -> float:
+        try:
+            return max(0.0, min(1.0, float(value)))
+        except (TypeError, ValueError):
+            return 0.5
+
+    def to_draft(self, reference_url: str | None = None) -> dict[str, Any]:
+        """The fields of the review card (the same names as the item form)."""
+        hints = self.search_hints
+        if self.pack_quantity and self.unit and (not hints or self.unit not in hints):
+            hints = f"{hints + ', ' if hints else ''}{self.pack_quantity:g} {self.unit}"
+        return {
+            "name": self.name or (self.product_title or "")[:200],
+            "brand": self.brand,
+            "category": self.category,
+            "priority": self.priority,
+            "search_hints": hints,
+            "unit": self.unit,
+            "target_price": self.target_price,
+            "target_unit_price": self.target_unit_price,
+            "check_interval_days": None,
+            "reference_url": reference_url,
+            "notes": self.notes,
+            "bulk_ok": True,
+        }
 
 
-@dataclass
-class ExtractResult:
-    source_kind: str  # "url" | "image"
-    source_ref: str  # the URL or the uploaded filename
-    item: ExtractedItem | None = None
-    error: str | None = None
-    usage: UsageTotals = field(default_factory=UsageTotals)
-    model: str = ""
-
-    @property
-    def ok(self) -> bool:
-        return self.item is not None and self.error is None
-
-
-class Extractor(Protocol):
-    name: str
-
-    def from_url(self, url: str, settings: Settings) -> ExtractResult: ...
-
-    def from_image(self, data: bytes, settings: Settings, filename: str = "") -> ExtractResult: ...
-
-
-def prepare_image(data: bytes, max_side: int = MAX_IMAGE_SIDE) -> tuple[bytes, str]:
-    """Rotate per EXIF, downscale to the recommended size and re-encode as JPEG. Raises ValueError for non-images."""
+def prepare_image(data: bytes, max_side: int = MAX_IMAGE_SIDE) -> bytes:
+    """Rotate per EXIF, shrink to what the model reads and re-encode as JPEG. Raises ValueError for non-images."""
     if len(data) > MAX_UPLOAD_BYTES:
-        raise ValueError("image is larger than 20 MB")
+        raise ValueError("The photo is larger than 20 MB.")
     try:
         with Image.open(io.BytesIO(data)) as img:
             img = ImageOps.exif_transpose(img)
@@ -150,115 +150,44 @@ def prepare_image(data: bytes, max_side: int = MAX_IMAGE_SIDE) -> tuple[bytes, s
             img.thumbnail((max_side, max_side))
             buffer = io.BytesIO()
             img.save(buffer, format="JPEG", quality=85, optimize=True)
-            return buffer.getvalue(), "image/jpeg"
-    except UnidentifiedImageError as exc:
-        raise ValueError("unsupported image format - use JPEG, PNG or WebP (iPhone HEIC photos need to be shared as JPEG)") from exc
+            return buffer.getvalue()
+    except (UnidentifiedImageError, OSError) as exc:
+        raise ValueError("That file is not a photo this app can read. Use JPEG, PNG or WebP.") from exc
 
 
-def _base_request(settings: Settings, content: Any, *, max_tokens: int = 4000) -> dict[str, Any]:
-    profile = model_profile(settings.search_model)
-    request: dict[str, Any] = {
-        "model": settings.search_model,
-        "max_tokens": max_tokens,
-        "system": [{"type": "text", "text": EXTRACT_SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}],
-        "messages": [{"role": "user", "content": content}],
-        "output_config": {"format": {"type": "json_schema", "schema": EXTRACT_SCHEMA}},
-    }
-    if profile.supports_effort:
-        request["output_config"]["effort"] = "medium"
-    if profile.supports_adaptive_thinking:
-        request["thinking"] = {"type": "adaptive"}
-    return request
+def find_link(text: str) -> str | None:
+    """The first product link in the words, if its domain is a plain one."""
+    match = URL_RE.search(text or "")
+    if not match:
+        return None
+    url = match.group(0).rstrip(".,;)")
+    return url if is_valid_domain(domain_of_url(url)) else None
 
 
-def build_url_request(url: str, settings: Settings) -> dict[str, Any]:
-    profile = model_profile(settings.search_model)
-    domain = domain_of_url(url)
-    request = _base_request(settings, f"Read this product page and extract the item for my shopping list: {url}")
-    request["tools"] = [{"type": profile.fetch_tool_type, "name": "web_fetch", "max_uses": 2, "allowed_domains": [domain], "max_content_tokens": 20000}]
-    return request
+def parse_reply(text: str) -> ExtractedItem | None:
+    start, end = text.find("{"), text.rfind("}")
+    if start < 0 or end < start:
+        return None
+    try:
+        data = json.loads(text[start : end + 1])
+        return ExtractedItem.model_validate(data) if isinstance(data, dict) else None
+    except (json.JSONDecodeError, ValidationError):
+        return None
 
 
-def build_image_request(jpeg: bytes, settings: Settings) -> dict[str, Any]:
-    content = [
-        {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": base64.standard_b64encode(jpeg).decode("ascii")}},
-        {"type": "text", "text": "Extract the product on this photo (brand, product, variant, pack size) for my shopping list."},
-    ]
-    return _base_request(settings, content)
-
-
-class AnthropicExtractor:
-    name = "anthropic"
-
-    def __init__(self, client: anthropic.Anthropic | None = None) -> None:
-        self._client = client or anthropic.Anthropic()
-
-    def _run(self, result: ExtractResult, request: dict[str, Any], settings: Settings) -> ExtractResult:
-        result.model = settings.search_model
-        try:
-            done = complete_with_continuations(self._client, request, settings)
-            result.usage = done.usage
-            if done.error:
-                result.error = done.error
-                return result
-            result.item = ExtractedItem.model_validate(extract_json(done.text))
-        except (anthropic.APIError, ValueError, ValidationError) as exc:
-            result.error = describe_api_error(exc)
-        if result.error:
-            log.warning("extraction from %s failed: %s", result.source_kind, result.error)
-        return result
-
-    def from_url(self, url: str, settings: Settings) -> ExtractResult:
-        result = ExtractResult(source_kind="url", source_ref=url)
-        if not domain_of_url(url) or not url.lower().startswith(("http://", "https://")):
-            result.error = "that does not look like a product URL"
-            return result
-        self._run(result, build_url_request(url, settings), settings)
-        if result.item and not result.item.retailer_domain:
-            result.item.retailer_domain = domain_of_url(url)
-        return result
-
-    def from_image(self, data: bytes, settings: Settings, filename: str = "") -> ExtractResult:
-        result = ExtractResult(source_kind="image", source_ref=filename or "photo")
-        try:
-            jpeg, _ = prepare_image(data)
-        except ValueError as exc:
-            result.error = str(exc)
-            return result
-        return self._run(result, build_image_request(jpeg, settings), settings)
-
-
-class FakeExtractor:
-    """Derives a plausible item from the URL slug / filename. No network, no credits."""
-
-    name = "fake"
-
-    @staticmethod
-    def _guess(text: str) -> ExtractedItem:
-        words = [w for w in re.split(r"[^a-zA-Z0-9]+", text) if w and not w.isdigit()]
-        words = [w for w in words if w.lower() not in {"www", "com", "nl", "p", "product", "producten", "jpg", "jpeg", "png", "webp", "img", "image"}]
-        brand = words[0].capitalize() if words else None
-        name = " ".join(w.lower() for w in words[1:4]).capitalize() if len(words) > 1 else (words[0].capitalize() if words else "")
-        return ExtractedItem(name=name, brand=brand, category="household", search_hints=" ".join(words[1:6]).lower() or None, confidence=0.4, summary="fake extraction (no API key): guessed from the URL/filename - please review")
-
-    def from_url(self, url: str, settings: Settings) -> ExtractResult:
-        result = ExtractResult(source_kind="url", source_ref=url, model="fake")
-        domain = domain_of_url(url)
-        if not domain:
-            result.error = "that does not look like a product URL"
-            return result
-        path = url.split(domain, 1)[-1]
-        result.item = self._guess(path)
-        result.item.retailer_domain = domain
-        return result
-
-    def from_image(self, data: bytes, settings: Settings, filename: str = "") -> ExtractResult:
-        result = ExtractResult(source_kind="image", source_ref=filename or "photo", model="fake")
-        try:
-            prepare_image(data)
-        except ValueError as exc:
-            result.error = str(exc)
-            return result
-        result.item = self._guess(filename.rsplit(".", 1)[0] if filename else "Photographed item")
-        result.item.summary = "fake extraction (no API key): guessed from the file name - please review"
-        return result
+def draft(claude: Claude, text: str, photo: bytes | None = None) -> tuple[ExtractedItem, str | None]:
+    """(the suggested item, the product link it read). Raises Unavailable with the reason in words."""
+    link = find_link(text)
+    web = WebPolicy(allowed=[domain_of_url(link)], budget=3) if link else None
+    words = text.strip() or "(no words, only the photo)"
+    prompt = f"Make the shopping-list entry for this. Reply with the JSON object only.\n\nThey said: {words}"
+    if link:
+        prompt += f"\n\nRead the product page first with WebFetch: {link}"
+    reply = claude.ask(prompt, SYSTEM, model=MODEL, effort=EFFORT, photo=photo, web=web, max_turns=6)
+    item = parse_reply(reply)
+    if item is None or not (item.name or item.product_title):
+        log.info("nothing recognised: %r", reply[:200])
+        raise Unavailable(NOTHING_FOUND)
+    if link and not item.retailer_domain:
+        item.retailer_domain = domain_of_url(link)
+    return item, link

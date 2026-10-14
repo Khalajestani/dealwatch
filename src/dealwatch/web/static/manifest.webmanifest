@@ -1,0 +1,14 @@
+{
+  "name": "Dealwatch",
+  "short_name": "Dealwatch",
+  "description": "Your shopping and wish list, watched for real deals.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f4f5f9",
+  "theme_color": "#5b6ee6",
+  "icons": [
+    { "src": "/static/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/static/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

@@ -1,0 +1,31 @@
+# Dealwatch on the Pi. Lives in /srv/dealwatch next to .env, data/ and backups/.
+# No port is published: the app is only reachable through the shared proxy (ENDURANCE's deploy/proxy).
+name: dealwatch
+
+services:
+  dealwatch:
+    image: dealwatch:latest
+    restart: unless-stopped
+    user: "1000:1000"
+    env_file: .env
+    environment:
+      # Served over HTTPS by the proxy, so the login cookie never travels in the clear.
+      DEALWATCH_COOKIE_SECURE: "true"
+    volumes:
+      - ./data:/app/data
+      - ./backups:/app/backups
+    read_only: true
+    # /tmp holds uploads while they are checked (up to 20 MB each), the nightly snapshot of the database and
+    # Claude Code's own small state while it runs.
+    tmpfs: ["/tmp:size=128m"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    # The app itself needs about 100 MB; Claude Code adds about 300 MB while it runs. A price check runs one at a
+    # time, so a check and a question on Ask together stay under the limit.
+    mem_limit: 1g
+    pids_limit: 200
+    networks: [proxy]
+
+networks:
+  proxy:
+    external: true

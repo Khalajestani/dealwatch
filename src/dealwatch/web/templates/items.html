@@ -16,13 +16,13 @@
 </form>
 
 {% if items %}
-<table>
+<div class="table-wrap"><table>
   <tr><th>Item</th><th>Category</th><th>Priority</th><th>Targets</th><th>Last best price</th><th>Last checked</th><th>Status</th></tr>
   {% for item in items %}
   {% set b = best.get(item.id) %}
   <tr class="{{ '' if item.active else 'inactive' }}">
     <td class="item-cell">
-      {% if item.image_path %}<img class="thumb" src="/uploads/{{ item.image_path }}" alt="" style="float:left;margin-right:10px">{% endif %}
+      {% if item.image_path %}<img class="thumb thumb-left" src="/uploads/{{ item.image_path }}" alt="">{% endif %}
       <a href="/items/{{ item.id }}"><strong>{{ item.display_name }}</strong></a>
       {% if item.search_hints %}<div class="muted small">{{ item.search_hints }}</div>{% endif %}
     </td>
@@ -34,10 +34,10 @@
     <td>{{ status_chip(item, item.id in due_ids) }}</td>
   </tr>
   {% endfor %}
-</table>
+</table></div>
 {% elif total %}
 <div class="card empty">{{ icon('search') }}<p>No items match these filters. <a href="/items">Clear filters</a></p></div>
 {% else %}
-<div class="card empty">{{ icon('bag') }}<p>Your list is empty. <a href="/items/new">Add your first item</a> - by typing, pasting a product link or snapping a photo - or <form method="post" action="/seed-samples" style="display:inline"><button class="small" type="submit">add sample items</button></form> to see how it works.</p></div>
+<div class="card empty">{{ icon('bag') }}<p>Your list is empty. <a href="/items/new">Add your first item</a> by saying it, snapping the pack or pasting a product link, or <form method="post" action="/seed-samples" class="inline-form"><button class="small" type="submit">add sample items</button></form> to see how it works.</p></div>
 {% endif %}
 {% endblock %}

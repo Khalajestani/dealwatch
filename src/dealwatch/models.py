@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 # --- enumerations kept as plain strings so the DB stays readable -------------------------
@@ -27,13 +27,27 @@ CATEGORIES: list[tuple[str, str]] = [
 ]
 CATEGORY_KEYS = [key for key, _ in CATEGORIES]
 CATEGORY_SHORT = {
-    "household": "Household", "personal_care": "Personal care", "groceries": "Groceries", "health": "Health",
-    "tools_diy": "Tools & DIY", "electronics": "Electronics", "home_garden": "Home & garden", "pets_baby": "Pets & baby", "other": "Other",
+    "household": "Household",
+    "personal_care": "Personal care",
+    "groceries": "Groceries",
+    "health": "Health",
+    "tools_diy": "Tools & DIY",
+    "electronics": "Electronics",
+    "home_garden": "Home & garden",
+    "pets_baby": "Pets & baby",
+    "other": "Other",
 }
 # icon symbol id (see web/templates/_icons.html) and colour class per category - keep the UI consistent
 CATEGORY_ICON = {
-    "household": "droplet", "personal_care": "heart", "groceries": "bag", "health": "activity", "tools_diy": "tool",
-    "electronics": "cpu", "home_garden": "home", "pets_baby": "smile", "other": "tag",
+    "household": "droplet",
+    "personal_care": "heart",
+    "groceries": "bag",
+    "health": "activity",
+    "tools_diy": "tool",
+    "electronics": "cpu",
+    "home_garden": "home",
+    "pets_baby": "smile",
+    "other": "tag",
 }
 
 PRIORITIES: list[tuple[str, str]] = [
@@ -46,7 +60,7 @@ PRIORITY_KEYS = [key for key, _ in PRIORITIES]
 UNITS: list[str] = ["piece", "roll", "wash", "tablet", "capsule", "bag", "ml", "l", "g", "kg", "m", "pair"]
 
 RETAILER_STATUSES = ["enabled", "disabled", "blocked"]
-RUN_STATUSES = ["running", "success", "partial", "failed", "planned"]
+RUN_STATUSES = ["running", "success", "partial", "failed"]
 PROMO_TYPES = ["none", "sale", "multibuy", "bundle", "bulk", "clearance", "member"]
 
 
@@ -111,9 +125,8 @@ class Run(Base):
     __tablename__ = "runs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    trigger: Mapped[str] = mapped_column(String(20), default="manual")  # manual | schedule | cli
+    trigger: Mapped[str] = mapped_column(String(20), default="manual")  # manual | schedule
     status: Mapped[str] = mapped_column(String(20), default="running")
-    dry_run: Mapped[bool] = mapped_column(Boolean, default=False)
     started_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime)
     model: Mapped[str | None] = mapped_column(String(100))
@@ -126,14 +139,7 @@ class Run(Base):
     items_checked: Mapped[int] = mapped_column(Integer, default=0)
     items_found: Mapped[int] = mapped_column(Integer, default=0)
     deal_count: Mapped[int] = mapped_column(Integer, default=0)
-    api_requests: Mapped[int] = mapped_column(Integer, default=0)
-    web_searches: Mapped[int] = mapped_column(Integer, default=0)
-    input_tokens: Mapped[int] = mapped_column(Integer, default=0)
-    output_tokens: Mapped[int] = mapped_column(Integer, default=0)
-    cache_read_tokens: Mapped[int] = mapped_column(Integer, default=0)
-    cache_write_tokens: Mapped[int] = mapped_column(Integer, default=0)
-    cost_usd: Mapped[float] = mapped_column(Float, default=0.0)  # estimate
-    estimated_cost_usd: Mapped[float | None] = mapped_column(Float)  # pre-run estimate from the planner
+    web_lookups: Mapped[int] = mapped_column(Integer, default=0)  # searches and page reads by Claude
     error: Mapped[str | None] = mapped_column(Text)
     plan_json: Mapped[str | None] = mapped_column(Text)  # what was planned (groups, domains, budgets)
     log_json: Mapped[str | None] = mapped_column(Text)  # queries, per-group errors, dropped offers
@@ -189,7 +195,6 @@ class Observation(Base):
     valid_until: Mapped[date | None] = mapped_column(Date)
     confidence: Mapped[float] = mapped_column(Float, default=0.5)
     evidence: Mapped[str | None] = mapped_column(Text)
-    source: Mapped[str] = mapped_column(String(30), default="llm_search")  # llm_search | <deal source adapter name>
     observed_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
     # analysis (filled after the run's searches complete)
     baseline_price: Mapped[float | None] = mapped_column(Float)
@@ -242,7 +247,6 @@ class PricePoint(Base):
     best_promo_type: Mapped[str] = mapped_column(String(20), default="none")
     promo_count: Mapped[int] = mapped_column(Integer, default=0)
     deal_count: Mapped[int] = mapped_column(Integer, default=0)
-    sources: Mapped[str] = mapped_column(String(200), default="llm_search")  # comma-separated
 
     item: Mapped[Item] = relationship(back_populates="price_points")
     run: Mapped[Run] = relationship(back_populates="price_points")
@@ -269,3 +273,14 @@ class Setting(Base):
 
     key: Mapped[str] = mapped_column(String(100), primary_key=True)
     value: Mapped[str] = mapped_column(Text)
+
+
+class ChatMessage(Base):
+    """One turn on the Ask page. Claude Code keeps nothing between messages, so the conversation lives here."""
+
+    __tablename__ = "chat_messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    role: Mapped[str] = mapped_column(String(10))  # user | assistant
+    content: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

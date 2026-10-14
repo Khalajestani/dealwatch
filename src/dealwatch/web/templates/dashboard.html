@@ -5,26 +5,25 @@
   <a class="card" href="/items"><span class="stat-icon">{{ icon('list') }}</span><div><div class="stat">{{ active_count }}</div><div class="stat-label">active items ({{ item_count }} total)</div></div></a>
   <a class="card" href="/items?status=due"><span class="stat-icon ok">{{ icon('check') }}</span><div><div class="stat">{{ due_count }}</div><div class="stat-label">due for a check</div></div></a>
   <a class="card" href="/retailers"><span class="stat-icon info">{{ icon('store') }}</span><div><div class="stat">{{ enabled_retailers }}</div><div class="stat-label">enabled retailers</div></div></a>
-  <a class="card" href="/runs"><span class="stat-icon warn">{{ icon('euro') }}</span><div><div class="stat">${{ '%.2f'|format(spent_30d) }}</div><div class="stat-label">est. spent, 30 days ({{ runs_30d }} runs)</div></div></a>
-  <div class="card"><span class="stat-icon">{{ icon('calendar') }}</span><div><div class="stat" style="font-size:16px">{{ next_run.strftime('%a %d %b %H:%M') if next_run else 'off' }}</div><div class="stat-label">next scheduled run</div></div></div>
+  <div class="card"><span class="stat-icon">{{ icon('calendar') }}</span><div><div class="stat stat-sm">{{ next_run.strftime('%a %d/%m %H:%M') if next_run else 'off' }}</div><div class="stat-label">next price check</div></div></div>
 </div>
 
 <div class="card">
   <div class="actions">
-    <form method="post" action="/runs/start">
+    <form method="post" action="/runs/start" data-busy="Starting...">
       <label class="inline"><input type="checkbox" name="force" value="1"> include items that are not due yet</label>
-      <button class="primary" type="submit" {% if run_active or not api_ready %}disabled{% endif %}>{{ icon('play', 'sm') }} Run now</button>
+      <button class="primary" type="submit" {% if run_active or not claude_ready %}disabled{% endif %}>{{ icon('play', 'sm') }} Check prices now</button>
     </form>
-    <form method="post" action="/runs/plan"><button type="submit">{{ icon('search', 'sm') }} Dry run (plan &amp; cost estimate)</button></form>
     <a class="btn" href="/items/new">{{ icon('plus', 'sm') }} Add item</a>
+    <a class="btn" href="/ask">{{ icon('message', 'sm') }} Ask</a>
     {% if item_count == 0 %}<form method="post" action="/seed-samples"><button type="submit">{{ icon('sparkles', 'sm') }} Add sample items</button></form>{% endif %}
   </div>
-  {% if not api_ready %}<p class="muted small">No Anthropic credentials detected - real runs are disabled. Copy <code>.env.example</code> to <code>.env</code>, set <code>ANTHROPIC_API_KEY</code>, restart.</p>{% endif %}
+  {% if not claude_ready %}<p class="muted small">Claude is not connected, so prices are not checked yet. The steps are in docs/assistant.md; everything else works without it.</p>{% endif %}
 </div>
 
-<h2>{{ icon('flame') }} Latest deals {% if last_complete %}<span class="muted small">from run #{{ last_complete.id }}, {{ last_complete.started_at|localtime(tz) }}</span>{% endif %}</h2>
+<h2>{{ icon('flame') }} Latest deals {% if last_complete %}<span class="muted small">from the check of {{ last_complete.started_at|localtime(tz) }}</span>{% endif %}</h2>
 {% if deals %}
-<table>
+<div class="table-wrap"><table>
   <tr><th>#</th><th>Item</th><th>Price</th><th>Per unit</th><th>Shop</th><th>Why</th><th></th></tr>
   {% for obs, item in deals %}
   <tr class="deal">
@@ -33,24 +32,24 @@
     <td><strong>{{ obs.price|money(obs.currency) }}</strong>{% if obs.list_price %} <span class="muted small">reg. {{ obs.list_price|money(obs.currency) }}</span>{% endif %}</td>
     <td>{% if obs.unit_price is not none %}{{ obs.unit_price|money(obs.currency) }}/{{ obs.unit }}{% else %}-{% endif %}</td>
     <td>{{ obs.retailer_domain }}</td>
-    <td class="small">{{ obs.reasons or '' }}{% if obs.promo_text %} · {{ obs.promo_text }}{% endif %}{% if obs.valid_until %} · until {{ obs.valid_until }}{% endif %}</td>
+    <td class="small">{{ obs.reasons or '' }}{% if obs.promo_text %} · {{ obs.promo_text }}{% endif %}{% if obs.valid_until %} · until {{ obs.valid_until.strftime('%d/%m/%Y') }}{% endif %}</td>
     <td><a class="btn small" href="{{ obs.url }}" target="_blank" rel="noopener">{{ icon('external', 'sm') }} open</a></td>
   </tr>
   {% endfor %}
-</table>
+</table></div>
 {% elif last_complete %}
-<p class="muted">The last run found nothing above your deal threshold. <a href="/runs/{{ last_complete.id }}">See the full report.</a></p>
+<p class="muted">The last check found nothing above your deal threshold. <a href="/runs/{{ last_complete.id }}">See the full report.</a></p>
 {% else %}
-<p class="muted">No completed runs yet. Add items, check the retailers list, then press <em>Run now</em> (or <em>Dry run</em> first to see the cost estimate).</p>
+<p class="muted">No completed price check yet. Add items and check the retailers list; the daily check picks them up, or press <em>Check prices now</em>.</p>
 {% endif %}
 
 {% if last_run %}
-<h2>{{ icon('play') }} Last run</h2>
+<h2>{{ icon('play') }} Last check</h2>
 <div class="card">
   <span class="badge {{ last_run.status }}">{{ last_run.status }}</span>
-  run <a href="/runs/{{ last_run.id }}">#{{ last_run.id }}</a> · {{ last_run.started_at|localtime(tz) }} · {{ last_run.trigger }} ·
-  {{ last_run.items_checked }} items checked · {{ last_run.deal_count }} deals · {{ last_run.web_searches }} searches · ${{ '%.3f'|format(last_run.cost_usd) }}
-  {% if last_run.error %}<div class="flash err" style="margin-top:8px">{{ last_run.error }}</div>{% endif %}
+  <a href="/runs/{{ last_run.id }}">#{{ last_run.id }}</a> · {{ last_run.started_at|localtime(tz) }} · {{ last_run.trigger }} ·
+  {{ last_run.items_checked }} items checked · {{ last_run.deal_count }} deals · {{ last_run.web_lookups }} web lookups
+  {% if last_run.error %}<div class="flash err flash-in">{{ last_run.error }}</div>{% endif %}
 </div>
 {% endif %}
 {% endblock %}

@@ -5,7 +5,7 @@
 <form method="post" action="/settings">
 {% for group, specs in groups.items() %}
 <div class="card settings-group">
-  <h2 style="margin-top:0">{{ group }}</h2>
+  <h2 class="flush">{{ group }}</h2>
   {% for spec in specs %}
   {% set value = settings[spec.key] %}
   <div class="settings-row">
@@ -15,11 +15,8 @@
         <label class="inline"><input type="checkbox" id="{{ spec.key }}" name="{{ spec.key }}" value="1" {% if value %}checked{% endif %}> enabled</label>
       {% elif spec.kind == 'choice' %}
         <select id="{{ spec.key }}" name="{{ spec.key }}">
-          {% set known = spec.choices|map(attribute=0)|list %}
-          {% if value not in known %}<option value="{{ value }}" selected>{{ value }} (custom)</option>{% endif %}
           {% for key, label in spec.choices %}<option value="{{ key }}" {% if key == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
         </select>
-        {% if spec.key == 'search_model' %}<input type="text" name="search_model_custom" placeholder="or type another model id" style="margin-top:6px">{% endif %}
       {% else %}
         <input type="text" id="{{ spec.key }}" name="{{ spec.key }}" value="{{ value }}">
       {% endif %}
@@ -31,15 +28,12 @@
 <button class="primary" type="submit">{{ icon('check', 'sm') }} Save settings</button>
 </form>
 
-<div class="card" style="margin-top:20px">
-  <h2 style="margin-top:0">Environment (read-only, from .env)</h2>
+<div class="card spaced">
+  <h2 class="flush">On this machine (from .env, read-only)</h2>
   <ul class="small">
-    <li>Anthropic credentials: {% if api_ready %}<span class="badge ok">found</span>{% else %}<span class="badge danger">missing</span>{% endif %}</li>
-    <li>Database: <code>{{ env.db_path }}</code></li>
-    <li>Reports folder: <code>{{ env.reports_dir }}</code></li>
-    <li>E-mail: {% if env.smtp_host %}{{ env.smtp_host }} → {{ env.smtp_to }}{% else %}<span class="muted">not configured</span>{% endif %}</li>
-    <li>Telegram: {% if env.telegram_bot_token %}configured{% else %}<span class="muted">not configured</span>{% endif %}</li>
-    <li>Fake LLM mode: {{ 'on' if env.fake_llm else 'off' }} · in-process scheduler: {{ 'on' if env.scheduler_enabled else 'off' }}</li>
+    <li>Claude: {% if claude_ready %}<span class="badge ok">connected to your Claude plan</span>{% else %}<span class="badge danger">not connected</span> <span class="muted">see docs/assistant.md</span>{% endif %}</li>
+    <li>Login: {% if env.auth_enabled %}<span class="badge ok">password set</span>{% else %}<span class="badge warn">no password, open to anyone who can reach it</span>{% endif %}</li>
+    <li>Database: <code>{{ env.db_path }}</code> · backups: <code>{{ env.backups_dir }}</code>, nightly at 03:00, newest {{ env.backups_keep }} kept</li>
   </ul>
 </div>
 {% endblock %}
