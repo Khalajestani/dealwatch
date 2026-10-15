@@ -24,7 +24,9 @@ COPY --from=build /app/.venv /app/.venv
 
 # Run as an ordinary user. Only the folders that hold data are writable; uid 1000 matches the first user on
 # Raspberry Pi OS, so mounted folders need no special ownership. The chown comes after the copy, which resets it.
+# Readable by that user whatever the file modes on the Mac that built it (an owner-only file would be a 500 on the Pi).
 RUN useradd --uid 1000 --no-create-home --shell /usr/sbin/nologin app \
+    && chmod -R a+rX /app \
     && mkdir -p data backups \
     && chown app:app data backups
 USER app

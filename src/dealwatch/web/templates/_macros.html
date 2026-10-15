@@ -22,9 +22,9 @@
 <div><label>Priority</label><select name="priority">{% for key, label in priorities %}<option value="{{ key }}" {% if key == (v.get('priority') or 'stock_up') %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
 <div class="wide"><label>Search hints <span class="faint">(pack size, variant, model - Dutch works best)</span></label><input type="text" name="search_hints" value="{{ v.get('search_hints') or '' }}" placeholder="keukenpapier XXL, 8 rollen"></div>
 <div><label>Unit for price comparison</label><select name="unit"><option value="">(none)</option>{% for u in units %}<option value="{{ u }}" {% if u == v.get('unit') %}selected{% endif %}>{{ u }}</option>{% endfor %}</select><div class="help">roll, tablet, wash, ml … lets bulk packs compare fairly</div></div>
-<div><label>Target price (per pack)</label><input type="text" name="target_price" value="{{ v.get('target_price') if v.get('target_price') is not none else '' }}" placeholder="4.50"></div>
-<div><label>Target price per unit</label><input type="text" name="target_unit_price" value="{{ v.get('target_unit_price') if v.get('target_unit_price') is not none else '' }}" placeholder="0.60"></div>
-<div><label>Check interval (days)</label><input type="text" name="check_interval_days" value="{{ v.get('check_interval_days') or '' }}" placeholder="by priority"></div>
+<div><label>Target price (per pack)</label><input type="text" inputmode="decimal" name="target_price" value="{{ v.get('target_price') if v.get('target_price') is not none else '' }}" placeholder="4.50"></div>
+<div><label>Target price per unit</label><input type="text" inputmode="decimal" name="target_unit_price" value="{{ v.get('target_unit_price') if v.get('target_unit_price') is not none else '' }}" placeholder="0.60"></div>
+<div><label>Check interval (days)</label><input type="text" inputmode="numeric" name="check_interval_days" value="{{ v.get('check_interval_days') or '' }}" placeholder="by priority"></div>
 <div><label class="inline"><input type="checkbox" name="bulk_ok" value="1" {% if v.get('bulk_ok', True) %}checked{% endif %}> household bulk packs are fine</label></div>
 <div class="wide"><label>Product link <span class="faint">(optional, used as a search hint)</span></label><input type="url" name="reference_url" value="{{ v.get('reference_url') or '' }}" placeholder="https://www.bol.com/…"></div>
 <div class="wide"><label>Notes</label><input type="text" name="notes" value="{{ v.get('notes') or '' }}"></div>

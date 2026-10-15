@@ -18,7 +18,7 @@
           {% for key, label in spec.choices %}<option value="{{ key }}" {% if key == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
         </select>
       {% else %}
-        <input type="text" id="{{ spec.key }}" name="{{ spec.key }}" value="{{ value }}">
+        <input type="text" id="{{ spec.key }}" name="{{ spec.key }}" value="{{ value }}"{% if spec.kind == 'int' %} inputmode="numeric"{% elif spec.kind == 'float' %} inputmode="decimal"{% endif %}>
       {% endif %}
     </div>
   </div>

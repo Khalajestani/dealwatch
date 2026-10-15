@@ -166,3 +166,11 @@ cannot delete. A photo can go with a question, for example a shelf label to comp
 ## D24. Dates as dd/mm/yyyy (14/10/2026)
 
 Owner convention across the apps. Times show as "Wed 14/10/2026 07:00" in the time zone from Settings.
+
+## D25. Number keypads, a comma as decimal point, readable image files (15/10/2026)
+
+Carried over from ENDUR∆NCE. Prices ask for the decimal keypad and counts for the digit pad (`inputmode`), and the
+fields stay text fields: a phone set to a Dutch region offers only a comma, which a number field would drop. The
+server already read "4,50" for target prices; settings now do too. The Dockerfile makes `/app` readable for the
+app user whatever the modes on the Mac (an owner-only template was a 500 on the Pi there), and a test fails on an
+unreadable file under `src`.

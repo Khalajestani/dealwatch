@@ -1,5 +1,6 @@
 import json
 import time
+from pathlib import Path
 
 import pytest
 from conftest import FakeClaude, FakeSearchClient, make_image
@@ -235,13 +236,14 @@ def test_settings_validation(client, session_factory):
     )
     r = client.post(
         "/settings",
-        data={"group_size": "4", "schedule_cron": "0 8 * * 2", "search_model": "opus"},
+        data={"group_size": "4", "schedule_cron": "0 8 * * 2", "search_model": "opus", "min_discount_pct": "12,5"},
         follow_redirects=False,
     )
     assert "msg=" in r.headers["location"]
     with session_factory() as s:
         st = get_settings(s)
         assert st.group_size == 4 and st.schedule_cron == "0 8 * * 2" and st.search_model == "opus"
+        assert st.min_discount_pct == 12.5  # a comma is a decimal point
         assert st.schedule_enabled is False  # unchecked checkbox
 
 
@@ -282,3 +284,15 @@ def test_a_check_cut_off_by_a_restart_is_marked_failed(session_factory, env):
     create_app(env, session_factory=session_factory, claude=FakeClaude(enabled=False))
     with session_factory() as s:
         assert s.scalars(select(Run)).one().status == "failed"
+
+
+def test_every_app_file_is_readable_in_the_image():
+    """The image keeps file modes and runs as an ordinary user: an owner-only file would be a 500 on the Pi."""
+    root = Path(__file__).parents[1]
+    unreadable = [
+        str(p.relative_to(root))
+        for top in ("src",)
+        for p in (root / top).rglob("*")
+        if p.is_file() and "__pycache__" not in p.parts and not p.stat().st_mode & 0o004
+    ]
+    assert unreadable == []

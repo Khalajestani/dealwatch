@@ -37,7 +37,7 @@ Category tags limit which batches a shop is used for (empty = all categories). C
         <form method="post" action="/retailers/{{ r.id }}" class="grid spaced">
           <input type="hidden" name="action" value="save">
           <div><label>Name</label><input type="text" name="name" value="{{ r.name }}"></div>
-          <div><label>Sort order</label><input type="text" name="sort_order" value="{{ r.sort_order }}"></div>
+          <div><label>Sort order</label><input type="text" inputmode="numeric" name="sort_order" value="{{ r.sort_order }}"></div>
           <div class="wide"><label>Categories</label><input type="text" name="categories" value="{{ r.categories or '' }}"></div>
           <div class="wide"><label>Notes</label><input type="text" name="notes" value="{{ r.notes or '' }}"></div>
           <div><button class="small primary" type="submit">Save</button></div>

@@ -217,9 +217,9 @@ def _coerce(key: str, raw: Any) -> Any:
             return raw
         return str(raw).strip().lower() in {"1", "true", "yes", "on"}
     if ftype in ("int", int):
-        return int(float(str(raw).strip()))
+        return int(float(str(raw).strip().replace(",", ".")))
     if ftype in ("float", float):
-        return float(str(raw).strip())
+        return float(str(raw).strip().replace(",", "."))
     return str(raw).strip()
 
 
