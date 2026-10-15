@@ -54,6 +54,7 @@ reported against each item's own price history. Runs on the Raspberry Pi beside 
 | Smart entry | `services/extract.py`, `templates/item_new.html`, `item_review.html` |
 | Ask | `services/ask.py`, `services/ask.md`, `templates/ask.html` |
 | Schedule and backups | `services/scheduler.py`, `backup.py` |
+| Recovering or reloading data (agents follow it) | `docs/recovery.md`, `backup.restore`, `make pi-backups`, `make pi-restore` |
 | Login | `security.py` |
 | Charts | `web/charts.py` (SVG), `static/tracker.js`, `.viz` tokens in `style.css` |
 | Deploy | `Dockerfile`, `deploy/`, `docs/raspberry-pi.md` |

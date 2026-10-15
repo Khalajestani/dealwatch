@@ -1,4 +1,4 @@
-.PHONY: install dev test lint format backup assistant-token pi-ship pi-site pi-backups pi-status
+.PHONY: install dev test lint format backup restore assistant-token pi-ship pi-site pi-backups pi-restore pi-status
 
 install:
 	uv sync
@@ -18,6 +18,10 @@ format:
 backup:
 	uv run dealwatch-backup
 
+# Put an archive back (stop `make dev` first): make restore a=backups/pi/<archive>.tar.gz
+restore:
+	uv run dealwatch-backup --restore $(a)
+
 # Signs Claude Code in with your Claude plan in the browser and prints a one-year token for Dealwatch
 # (docs/assistant.md). Uses the Claude Code that ships with the app.
 assistant-token:
@@ -32,6 +36,10 @@ pi-site:
 
 pi-backups:
 	deploy/ship.sh backups
+
+# Put a backup back on the Pi: make pi-restore a=backups/pi/<archive>
+pi-restore:
+	deploy/ship.sh restore $(a)
 
 pi-status:
 	deploy/ship.sh status

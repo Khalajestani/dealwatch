@@ -26,6 +26,7 @@ Followed ENDUR∆NCE's `docs/19-playbook-for-new-apps.md` and TOOL·E's latest s
 | Runs on the Pi at `https://dealwatch.home.arpa`, home network and VPN only | `Dockerfile`, `deploy/dealwatch/compose.yaml`, `deploy/proxy/dealwatch.caddy`, [raspberry-pi.md](raspberry-pi.md) |
 | Built on the Mac, shipped over SSH | `deploy/ship.sh`, `make pi-ship` |
 | Secrets typed by the owner on the Pi only | `deploy/dealwatch/make-env.sh` |
+| Data can be put back after a fix or an incident, by an agent too | `backup.py` (`restore`), `make pi-restore`, [recovery.md](recovery.md), D26 |
 | Daily scheduled jobs: the price check and the backup | `services/scheduler.py`, default `0 7 * * *` (D15), backup at 03:00 |
 | The updates there: deals on the dashboard, a report per check, the tracker | Dashboard, Checks, Tracker pages; a Home Screen app (`manifest.webmanifest`, `sw.js`) |
 | Claude on the owner's plan, no API key, nothing billed | `services/claude.py`, [assistant.md](assistant.md), D17 to D19 |

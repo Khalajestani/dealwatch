@@ -39,7 +39,7 @@ app on the iPhone. Claude runs on your Claude plan: no API key, nothing billed p
    without a deal, not found and errors. The dashboard shows the latest deals.
 
 Details: [architecture](docs/architecture.md) · [decisions](docs/decisions.md) ·
-[requirements](docs/requirements.md) · [on the Pi](docs/raspberry-pi.md) · [Claude](docs/assistant.md)
+[requirements](docs/requirements.md) · [on the Pi](docs/raspberry-pi.md) · [Claude](docs/assistant.md) · [recovery](docs/recovery.md)
 
 ## Using it
 
@@ -69,8 +69,8 @@ locale, schedule. Everything has inline help.
 
 ## Your data
 
-Everything is in one SQLite file, `data/dealwatch.db`, backed up every night (newest 30 kept, `make pi-backups`
-copies them to the Mac). CSV exports are linked in the footer: `/export/price_points.csv`, `observations`,
+Everything is in one SQLite file, `data/dealwatch.db`, backed up every night with the item photos (newest 30 kept, `make pi-backups`
+copies them to the Mac, `make pi-restore` puts one back; [docs/recovery.md](docs/recovery.md) when data is lost or wrong). CSV exports are linked in the footer: `/export/price_points.csv`, `observations`,
 `items`, `runs`, and `/items/{id}/price_points.csv`.
 
 | Table | One row per | Notes |
@@ -123,5 +123,5 @@ src/dealwatch/
   web/              app.py (routes), templates, static (style.css, app.js, tracker.js, PWA files), charts.py
 tests/              pytest, with stand-ins for Claude (conftest.py)
 deploy/             dealwatch/ (compose, make-env.sh), proxy/ (site file), ship.sh
-docs/               requirements, decisions, architecture, assistant, raspberry-pi, roadmap
+docs/               requirements, decisions, architecture, assistant, raspberry-pi, recovery, roadmap
 ```

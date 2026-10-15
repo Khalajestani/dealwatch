@@ -4,7 +4,8 @@
 #
 #   deploy/ship.sh app       build the image, send it, restart the app   (the default)
 #   deploy/ship.sh site      add dealwatch.home.arpa to the shared proxy and reload it
-#   deploy/ship.sh backups   copy the Pi's nightly backups to backups/pi/ on this Mac
+#   deploy/ship.sh backups   back up now on the Pi, copy all its backups to backups/pi/ on this Mac
+#   deploy/ship.sh restore backups/pi/<archive>   put a backup back on the Pi (docs: recovery)
 #   deploy/ship.sh status    what is running, disk, memory, temperature
 #
 # The Pi is reached as "pi-apps" (an entry in ~/.ssh/config). Another name: PI_HOST=name.
@@ -41,9 +42,22 @@ site)
     echo "Proxy serves dealwatch.home.arpa."
     ;;
 backups)
+    ssh "$HOST" 'cd /srv/dealwatch && docker compose exec -T dealwatch dealwatch-backup' \
+        || echo "No fresh backup (is the app running?). Copying the ones there are."
     mkdir -p backups/pi
     rsync -a "$HOST:/srv/dealwatch/backups/" backups/pi/
     echo "Newest copy: $(ls -1 backups/pi | tail -1)"
+    ;;
+restore)
+    archive="${2:?Usage: deploy/ship.sh restore backups/pi/dealwatch-YYYYMMDD-HHMMSS.tar.gz}"
+    name="$(basename "$archive")"
+    rsync -a "$archive" "$HOST:/srv/dealwatch/backups/$name"
+    # Stopped while the files are swapped and started again either way, on the old data if the archive
+    # is refused. What was there is kept as a new archive in backups/; the app migrates older data forward.
+    ssh "$HOST" "cd /srv/dealwatch && docker compose stop \
+        && { docker compose run --rm -T dealwatch dealwatch-backup --restore 'backups/$name'; rc=\$?; \
+             docker compose up -d --wait; exit \$rc; }"
+    echo "Restored $name. Check the app, then run make pi-backups to keep a copy of what was replaced."
     ;;
 status)
     # shellcheck disable=SC2016
@@ -54,7 +68,7 @@ status)
         && du -sh /srv/dealwatch/data /srv/dealwatch/backups 2>/dev/null'
     ;;
 *)
-    sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'
     exit 1
     ;;
 esac

@@ -174,3 +174,13 @@ fields stay text fields: a phone set to a Dutch region offers only a comma, whic
 server already read "4,50" for target prices; settings now do too. The Dockerfile makes `/app` readable for the
 app user whatever the modes on the Mac (an owner-only template was a 500 on the Pi there), and a test fails on an
 unreadable file under `src`.
+
+## D26. A checked restore an agent can run (15/10/2026)
+
+Putting a backup back meant typing file commands on the Pi, and no backup had been copied off it yet.
+`dealwatch-backup --restore ARCHIVE` checks the archive (a whole SQLite database, nothing unpacking outside its
+folder), backs up what is there, then swaps the database and photos; the app adds the columns an older database
+lacks on start. `deploy/ship.sh restore` runs it on the Pi with the app stopped and starts it again either way.
+`make pi-backups` writes a fresh archive before copying, so the Mac gets the state of that moment.
+[recovery.md](recovery.md) is written for an agent: rules (copy first, never edit on the Pi, code before data) and
+the usual cases. ENDUR∆NCE and TOOL·E work the same way.

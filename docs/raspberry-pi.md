@@ -73,14 +73,11 @@ Steps marked **owner** need a password or a tap only the owner does.
 | Task | Command |
 |---|---|
 | What is running, disk, memory | `make pi-status` |
-| Copy backups to the Mac | `make pi-backups` (into `backups/pi/`) |
-| A backup now | `ssh pi-apps 'cd /srv/dealwatch && docker compose exec dealwatch dealwatch-backup'` |
+| Back up now and copy all backups to the Mac | `make pi-backups` (into `backups/pi/`) |
 | Logs | `ssh pi-apps 'cd /srv/dealwatch && docker compose logs --tail 50'` |
 | New login password (owner) | `ssh -t pi-apps /srv/dealwatch/make-env.sh --replace` (every device signs in again) |
 
 ## Restore
 
-```bash
-ssh pi-apps 'cd /srv/dealwatch && docker compose down'
-ssh pi-apps 'cd /srv/dealwatch && rm -f data/dealwatch.db-wal data/dealwatch.db-shm && tar -xzf backups/dealwatch-YYYYMMDD-HHMMSS.tar.gz -C data && docker compose up -d --wait'
-```
+`make pi-restore a=backups/pi/<archive>`. It checks the archive, keeps what was there, and starts the app again.
+When and how, for the owner or an agent: [recovery.md](recovery.md).
