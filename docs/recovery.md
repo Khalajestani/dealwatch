@@ -14,8 +14,9 @@ to an agent: "follow docs/recovery.md to ...". The backup and restore code is `s
 
 An archive is `dealwatch-YYYYMMDD-HHMMSS.tar.gz` holding `dealwatch.db` and `uploads/`, laid out exactly as in `data/`. The app
 writes one every night at 03:00 and keeps the newest 30 on the Pi. `make pi-backups` writes a fresh one and copies all
-of them to `backups/pi/` in this repo on the Mac (git-ignored), where nothing is ever pruned. Until that runs the only
-copies are on the Pi's SD card, so run it weekly and before anything risky.
+of them to `backups/pi/` in this repo on the Mac (git-ignored), where nothing is ever pruned. The Mac pulls all three
+apps every day at 10:00 (ENDUR∆NCE's `deploy/mac/`, log in `~/Library/Logs/pi-backups.log`, a notification if it fails); a Mac asleep
+then pulls when it wakes. Run `make pi-backups` by hand before anything risky.
 
 ## Commands (on the Mac, in this repo)
 
