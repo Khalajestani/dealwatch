@@ -1,43 +1,47 @@
 {% extends "base.html" %}
-{% from "_macros.html" import cat, priority_badge, status_chip with context %}
+{% from "_macros.html" import tile, next_check with context %}
 {% block title %}Items · Dealwatch{% endblock %}
 {% block content %}
 <div class="page-head">
-  <h1>{{ icon('list') }} Shopping &amp; wish list <span class="badge">{{ items|length }}{% if items|length != total %} of {{ total }}{% endif %}</span>{% if due_count %}<span class="badge due">{{ due_count }} due</span>{% endif %}</h1>
-  <a class="btn primary" href="/items/new">{{ icon('plus', 'sm') }} Add item</a>
+  <h1>Items <span class="count">{{ total }}</span></h1>
+  <a class="btn primary small hide-mobile" href="/items/new">{{ icon('plus', 'sm') }} Add item</a>
 </div>
 
-<form method="get" action="/items" class="card toolbar" data-autosubmit>
-  <div class="search"><label>Search</label><input type="search" name="q" value="{{ filters.q }}" placeholder="name, brand, hints, notes…"></div>
-  <div><label>Category</label><select name="category"><option value="">All categories</option>{% for key, label in categories %}<option value="{{ key }}" {% if key == filters.category %}selected{% endif %}>{{ category_short[key] }}</option>{% endfor %}</select></div>
-  <div><label>Priority</label><select name="priority"><option value="">All priorities</option>{% for key, label in priorities %}<option value="{{ key }}" {% if key == filters.priority %}selected{% endif %}>{{ key.replace('_', ' ') }}</option>{% endfor %}</select></div>
-  <div><label>Status</label><select name="status"><option value="">Any status</option>{% for key, label in [('due', 'Due now'), ('waiting', 'Waiting'), ('snoozed', 'Snoozed'), ('paused', 'Paused'), ('deal', 'Has a deal'), ('untracked', 'No price yet')] %}<option value="{{ key }}" {% if key == filters.status %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
-  <div class="end"><button type="submit">{{ icon('filter', 'sm') }} Apply</button>{% if filters.any %}<a class="btn ghost" href="/items">{{ icon('x', 'sm') }} Clear</a>{% endif %}</div>
+{% if total %}
+<form method="get" action="/items" class="filters" data-autosubmit role="search">
+  <div class="search">{{ icon('search', 'sm') }}<input type="search" name="q" value="{{ filters.q }}" placeholder="Search your list" aria-label="Search your list"></div>
+  <select name="category" aria-label="Category"><option value="">All</option>{% for key, label in categories %}<option value="{{ key }}" {% if key == filters.category %}selected{% endif %}>{{ category_short[key] }}</option>{% endfor %}</select>
+  {% if filters.status %}<input type="hidden" name="status" value="{{ filters.status }}">{% endif %}
 </form>
+<nav class="chips" aria-label="Show">
+  {% for key, label, url, n in status_links %}<a href="{{ url }}" class="{{ 'active' if filters.status == key }}">{{ label }}{% if key %} <span class="n">{{ n }}</span>{% endif %}</a>{% endfor %}
+</nav>
+{% endif %}
 
 {% if items %}
-<div class="table-wrap"><table>
-  <tr><th>Item</th><th>Category</th><th>Priority</th><th>Targets</th><th>Last best price</th><th>Last checked</th><th>Status</th></tr>
+<div class="list">
   {% for item in items %}
   {% set b = best.get(item.id) %}
-  <tr class="{{ '' if item.active else 'inactive' }}">
-    <td class="item-cell">
-      {% if item.image_path %}<img class="thumb thumb-left" src="/uploads/{{ item.image_path }}" alt="">{% endif %}
-      <a href="/items/{{ item.id }}"><strong>{{ item.display_name }}</strong></a>
-      {% if item.search_hints %}<div class="muted small">{{ item.search_hints }}</div>{% endif %}
-    </td>
-    <td>{{ cat(item.category) }}</td>
-    <td>{{ priority_badge(item.priority) }}</td>
-    <td class="small num">{% if item.target_price %}≤ {{ item.target_price|money(settings.currency) }}{% endif %}{% if item.target_unit_price %}<div>≤ {{ item.target_unit_price|money(settings.currency) }}/{{ item.unit or 'unit' }}</div>{% endif %}</td>
-    <td class="num">{% if b %}<strong>{{ b.price|money(b.currency) }}</strong>{% if b.unit_price is not none %} <span class="muted small">{{ b.unit_price|money(b.currency) }}/{{ b.unit }}</span>{% endif %}<div class="muted small">{{ b.retailer_domain }}{% if b.is_deal %} <span class="badge deal">{{ icon('flame', 'sm') }} deal</span>{% endif %}</div>{% else %}<span class="faint">-</span>{% endif %}</td>
-    <td class="small muted">{{ item.last_checked_at|localtime(tz) if item.last_checked_at else 'never' }}</td>
-    <td>{{ status_chip(item, item.id in due_ids) }}</td>
-  </tr>
+  <a class="row {{ '' if item.active else 'inactive' }}" href="/items/{{ item.id }}">
+    {{ tile(item) }}
+    <div class="row-main">
+      <div class="row-title">{{ item.display_name }}</div>
+      <div class="row-sub">{% if b %}{{ b.retailer_domain }} · {% endif %}{% if item.last_checked_at %}checked {{ item.last_checked_at|friendly(tz, now, false) }}{% else %}not checked yet{% endif %}</div>
+    </div>
+    <div class="row-end">
+      {% if b %}<span class="price">{% if b.is_deal %}<span class="flame" title="A deal">{{ icon('flame', 'sm') }}</span> {% endif %}{{ b.price|money(b.currency) }}</span>{% else %}<span class="faint small">no price yet</span>{% endif %}
+      {{ next_check(item, item.id in due_ids, due_ats.get(item.id), now) }}
+    </div>
+  </a>
   {% endfor %}
-</table></div>
+</div>
 {% elif total %}
-<div class="card empty">{{ icon('search') }}<p>No items match these filters. <a href="/items">Clear filters</a></p></div>
+<div class="card empty">{{ icon('search') }}<p>Nothing matches. <a href="/items">Show everything</a></p></div>
 {% else %}
-<div class="card empty">{{ icon('bag') }}<p>Your list is empty. <a href="/items/new">Add your first item</a> by saying it, snapping the pack or pasting a product link, or <form method="post" action="/seed-samples" class="inline-form"><button class="small" type="submit">add sample items</button></form> to see how it works.</p></div>
+<div class="card empty">
+  {{ icon('tag') }}
+  <p>Your list is empty. <a href="/items/new">Add your first item</a> by saying it, snapping the pack or typing it in.</p>
+  <form method="post" action="/seed-samples" class="spaced"><button class="small" type="submit">{{ icon('sparkles', 'sm') }} Try sample items</button></form>
+</div>
 {% endif %}
 {% endblock %}

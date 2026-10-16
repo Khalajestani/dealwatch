@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% from "_macros.html" import item_form with context %}
+{% block title %}Edit {{ item.display_name }} · Dealwatch{% endblock %}
+{% block content %}
+<a class="back" href="/items/{{ item.id }}">{{ icon('arrow-left', 'sm') }} {{ item.display_name }}</a>
+<h1>Edit item</h1>
+
+<div class="card">
+  {% call item_form(values, '/items/%d'|format(item.id), 'Save') %}
+  <a class="btn ghost" href="/items/{{ item.id }}">Cancel</a>
+  {% endcall %}
+</div>
+
+<div class="danger-zone">
+  {% if item.image_path %}
+  <form method="post" action="/items/{{ item.id }}/action" class="actions">
+    <img class="thumb" src="/uploads/{{ item.image_path }}" alt="The item's photo">
+    <button type="submit" class="small" name="action" value="remove_photo">{{ icon('image', 'sm') }} Remove photo</button>
+  </form>
+  {% endif %}
+  <form method="post" action="/items/{{ item.id }}/action" data-confirm="Delete {{ item.display_name }} and its price history?">
+    <input type="hidden" name="action" value="delete">
+    <button class="danger small" type="submit">{{ icon('trash', 'sm') }} Delete item</button>
+  </form>
+</div>
+{% endblock %}

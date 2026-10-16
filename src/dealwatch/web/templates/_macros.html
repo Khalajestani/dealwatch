@@ -2,32 +2,109 @@
 <span class="cat cat-{{ key }}"><i>{{ icon(category_icon.get(key, 'tag'), 'sm') }}</i>{{ category_short.get(key, key) }}</span>
 {%- endmacro %}
 
+{% macro tile(item) -%}
+{# The item's photo, or its category icon in the category colour. #}
+{% if item.image_path %}<span class="tile photo"><img src="/uploads/{{ item.image_path }}" alt=""></span>
+{%- else %}<span class="tile cat-{{ item.category }}">{{ icon(category_icon.get(item.category, 'tag')) }}</span>{% endif %}
+{%- endmacro %}
+
 {% macro priority_badge(key) -%}
-<span class="badge {{ key }}">{% if key == 'need' %}{{ icon('zap', 'sm') }}{% elif key == 'wishlist' %}{{ icon('heart', 'sm') }}{% else %}{{ icon('bag', 'sm') }}{% endif %} {{ {'need': 'need', 'stock_up': 'stock up', 'wishlist': 'wishlist'}.get(key, key) }}</span>
+<span class="badge {{ key }}">{% if key == 'need' %}{{ icon('zap', 'sm') }}{% elif key == 'wishlist' %}{{ icon('heart', 'sm') }}{% else %}{{ icon('bag', 'sm') }}{% endif %} {{ priority_short.get(key, key) }}</span>
 {%- endmacro %}
 
-{% macro status_chip(item, due) -%}
+{% macro next_check(item, due, at, now) -%}
+{# When the item is looked at next: in the next check, in some days, or not (paused, snoozed after buying). #}
 {% if not item.active %}<span class="badge">{{ icon('pause', 'sm') }} paused</span>
-{% elif item.snooze_until %}<span class="badge snoozed">{{ icon('clock', 'sm') }} snoozed</span>
-{% elif due %}<span class="badge due">{{ icon('check', 'sm') }} due</span>
-{% else %}<span class="badge">{{ icon('clock', 'sm') }} waiting</span>{% endif %}
+{%- elif item.snooze_until and item.snooze_until > now %}<span class="badge snoozed">{{ icon('clock', 'sm') }} snoozed</span>
+{%- elif due %}<span class="badge due">{{ icon('refresh', 'sm') }} next check</span>
+{%- else %}{% set days = ((at - now).total_seconds() / 86400)|round(0, 'ceil')|int %}<span class="badge">{{ icon('clock', 'sm') }} {{ 'tomorrow' if days <= 1 else 'in %d days'|format(days) }}</span>{% endif %}
 {%- endmacro %}
 
-{% macro item_fields(v, settings) -%}
-{# shared editable fields for add-review and edit forms; `v` is a dict-like with the current values #}
-<div><label>Name *</label><input type="text" name="name" value="{{ v.get('name') or '' }}" required placeholder="Kitchen towels" data-similar="similar-box" data-exclude="{{ v.get('id') or '' }}"></div>
-<div><label>Brand</label><input type="text" name="brand" value="{{ v.get('brand') or '' }}" placeholder="Page" data-similar-brand></div>
-<div class="wide"><div id="similar-box" class="similar"></div></div>
-<div><label>Category</label><select name="category">{% for key, label in categories %}<option value="{{ key }}" {% if key == (v.get('category') or 'household') %}selected{% endif %}>{{ category_short[key] }}</option>{% endfor %}</select></div>
-<div><label>Priority</label><select name="priority">{% for key, label in priorities %}<option value="{{ key }}" {% if key == (v.get('priority') or 'stock_up') %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
-<div class="wide"><label>Search hints <span class="faint">(pack size, variant, model - Dutch works best)</span></label><input type="text" name="search_hints" value="{{ v.get('search_hints') or '' }}" placeholder="keukenpapier XXL, 8 rollen"></div>
-<div><label>Unit for price comparison</label><select name="unit"><option value="">(none)</option>{% for u in units %}<option value="{{ u }}" {% if u == v.get('unit') %}selected{% endif %}>{{ u }}</option>{% endfor %}</select><div class="help">roll, tablet, wash, ml … lets bulk packs compare fairly</div></div>
-<div><label>Target price (per pack)</label><input type="text" inputmode="decimal" name="target_price" value="{{ v.get('target_price') if v.get('target_price') is not none else '' }}" placeholder="4.50"></div>
-<div><label>Target price per unit</label><input type="text" inputmode="decimal" name="target_unit_price" value="{{ v.get('target_unit_price') if v.get('target_unit_price') is not none else '' }}" placeholder="0.60"></div>
-<div><label>Check interval (days)</label><input type="text" inputmode="numeric" name="check_interval_days" value="{{ v.get('check_interval_days') or '' }}" placeholder="by priority"></div>
-<div><label class="inline"><input type="checkbox" name="bulk_ok" value="1" {% if v.get('bulk_ok', True) %}checked{% endif %}> household bulk packs are fine</label></div>
-<div class="wide"><label>Product link <span class="faint">(optional, used as a search hint)</span></label><input type="url" name="reference_url" value="{{ v.get('reference_url') or '' }}" placeholder="https://www.bol.com/…"></div>
-<div class="wide"><label>Notes</label><input type="text" name="notes" value="{{ v.get('notes') or '' }}"></div>
+{% macro money_input(name, value, placeholder, label_id) -%}
+<div class="field-money"><span aria-hidden="true">€</span><input type="text" inputmode="decimal" id="{{ label_id }}" name="{{ name }}" value="{{ value if value is not none else '' }}" placeholder="{{ placeholder }}" autocomplete="off"></div>
+{%- endmacro %}
+
+{% macro item_form(v, action, submit) -%}
+{# The one item form, for adding (by hand or after the smart entry) and for editing. Only what the price checks
+   use is asked; a product link or notes from the smart entry or Ask are kept as they are. `v` holds the values,
+   the caller adds the buttons next to Save. #}
+<form method="post" action="{{ action }}" class="item-form">
+  {% if v.get('image_path') %}<input type="hidden" name="image_path" value="{{ v.image_path }}">{% endif %}
+  {% for key in ('reference_url', 'notes') if v.get(key) %}<input type="hidden" name="{{ key }}" value="{{ v[key] }}">{% endfor %}
+
+  <section class="form-section">
+    <h3>{{ icon('search', 'sm') }} What to look for</h3>
+    <div class="fields">
+      <div class="wide">
+        <label for="f-name">Name</label>
+        <input id="f-name" type="text" name="name" value="{{ v.get('name') or '' }}" required placeholder="Kitchen towels" autocomplete="off" data-similar="similar-box" data-exclude="{{ v.get('id') or '' }}">
+        <div id="similar-box" class="similar spaced" aria-live="polite"></div>
+      </div>
+      <div>
+        <label for="f-brand">Brand <span class="faint">optional</span></label>
+        <input id="f-brand" type="text" name="brand" value="{{ v.get('brand') or '' }}" placeholder="Page" autocomplete="off" data-similar-brand>
+      </div>
+      <div>
+        <label for="f-category">Category</label>
+        <select id="f-category" name="category">{% for key, label in categories %}<option value="{{ key }}" {% if key == (v.get('category') or 'household') %}selected{% endif %}>{{ category_short[key] }}</option>{% endfor %}</select>
+      </div>
+      <div class="wide">
+        <label for="f-hints">Search words <span class="faint">optional</span></label>
+        <input id="f-hints" type="text" name="search_hints" value="{{ v.get('search_hints') or '' }}" placeholder="keukenpapier XXL, 8 rollen" autocomplete="off">
+        <div class="help">Pack size, variant or model number. Dutch works best: Claude searches the shops with these.</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="form-section">
+    <h3>{{ icon('zap', 'sm') }} How much you need it</h3>
+    <div class="seg" role="radiogroup" aria-label="Priority">
+      {% for key, label in priorities %}
+      <input type="radio" id="f-priority-{{ key }}" name="priority" value="{{ key }}" {% if key == (v.get('priority') or 'stock_up') %}checked{% endif %}>
+      <label for="f-priority-{{ key }}">{{ priority_short[key]|capitalize }}<small>every {{ settings.interval_for(key) }} days</small></label>
+      {% endfor %}
+    </div>
+    <div class="help">Need it: the best price soon. Stock up: only real deals. Wishlist: only great deals.</div>
+  </section>
+
+  <section class="form-section">
+    <h3>{{ icon('euro', 'sm') }} When to tell you</h3>
+    <div class="help">Leave the targets blank to judge by the item's own price history. At or under a target is always a deal.</div>
+    <div class="fields">
+      <div class="wide">
+        <label for="f-target">Target price per pack <span class="faint">optional</span></label>
+        {{ money_input('target_price', v.get('target_price'), '4.50', 'f-target') }}
+      </div>
+      <div>
+        <label for="f-unit">Compare per</label>
+        <select id="f-unit" name="unit"><option value="">pack</option>{% for u in units %}<option value="{{ u }}" {% if u == v.get('unit') %}selected{% endif %}>{{ u }}</option>{% endfor %}</select>
+      </div>
+      <div>
+        <label for="f-unit-target">Target per unit <span class="faint">optional</span></label>
+        {{ money_input('target_unit_price', v.get('target_unit_price'), '0.30', 'f-unit-target') }}
+      </div>
+      <div class="wide toggle-row">
+        <div><label for="f-bulk">Bulk packs are fine</label><div class="help">Large and multi-packs count too; the price per unit keeps them fair.</div></div>
+        <input type="checkbox" id="f-bulk" name="bulk_ok" value="1" {% if v.get('bulk_ok', True) %}checked{% endif %}>
+      </div>
+    </div>
+  </section>
+
+  <details class="form-section"{% if v.get('check_interval_days') %} open{% endif %}>
+    <summary>Check more or less often</summary>
+    <div class="fields spaced">
+      <div>
+        <label for="f-interval">Check every (days)</label>
+        <input id="f-interval" type="text" inputmode="numeric" name="check_interval_days" value="{{ v.get('check_interval_days') or '' }}" placeholder="as the priority says" autocomplete="off">
+      </div>
+    </div>
+  </details>
+
+  <div class="form-foot">
+    <button class="primary" type="submit">{{ icon('check', 'sm') }} {{ submit }}</button>
+    {{ caller() if caller }}
+  </div>
+</form>
 {%- endmacro %}
 
 {% macro talk_box(name, placeholder, photo=false) -%}

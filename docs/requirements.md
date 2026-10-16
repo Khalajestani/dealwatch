@@ -38,3 +38,21 @@ Followed ENDUR∆NCE's `docs/19-playbook-for-new-apps.md` and TOOL·E's latest s
 
 Owner rules carried over: no payment outside the Claude subscription; private; clean and lean; the owner types
 every secret; dates shown dd/mm/yyyy; no em-dashes in UI text or docs.
+
+## R3. A clearer, mobile-friendly UI (16/10/2026)
+
+> "I do not like the current main page and the overall UI of this APP. It has the useful functionalities I want but
+> I want an better presentation of the data. On main page I want a subtle indication last run did run and was
+> successful, then any alerts for new lower process found if it did, a place I can lookup what have been being
+> checked. also the add item should have a edit part that looks similar to the add part, but remove the clutter and
+> make it easier to use and add / modify things. keep the data points only useful for the actual functionality that
+> is searching for new low prices and deals. All these elements are there but I want a better and mobile friendly
+> UI. Take any decision base on the Design recommendations and best practices. add some subtle style and colours too."
+
+| Asked | Where |
+|---|---|
+| A subtle sign the last check ran and went well | Home, the status line (`dashboard.html`) |
+| Alerts for new lower prices | Home, Deals (`queries.current_deals`) and Price drops (`insights.price_drops`) |
+| A place to look up what is being checked | Home, Watching (`planner.due_at`); Items with status chips; Checks |
+| Edit that looks like Add, less clutter, only what the search uses | `item_form` in `_macros.html`, `item_new.html`, `item_edit.html`, D27 |
+| Mobile friendly, subtle style and colour | `style.css`, the tab bar in `base.html`, D27 |

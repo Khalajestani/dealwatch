@@ -2,7 +2,7 @@
 {% from "_macros.html" import talk_box with context %}
 {% block title %}Ask · Dealwatch{% endblock %}
 {% block content %}
-<h1>{{ icon('message') }} Ask</h1>
+<h1>Ask</h1>
 {% if turns %}
 <div class="card conversation">
   {% for turn in turns %}
@@ -26,15 +26,10 @@
       <button class="primary" type="submit">{{ icon('sparkles', 'sm') }} Ask</button>
     </div>
   </form>
-  <div class="examples">
-    <h3>Try</h3>
-    <ul>
-      <li data-example>What are the best deals right now?</li>
-      <li data-example>Is the coffee cheaper than usual?</li>
-      <li data-example>I bought toilet paper today</li>
-      <li data-example>Watch Dreft Platinum dishwasher tablets, I need them soon</li>
-      <li data-example>Set the drill target to 129 euro</li>
-    </ul>
+  <div class="examples" aria-label="Examples">
+    {% for example in ["What are the best deals right now?", "Is the coffee cheaper than usual?", "I bought toilet paper today", "Watch Dreft Platinum dishwasher tablets, I need them soon", "Set the drill target to 129 euro"] %}
+    <button type="button" data-example>{{ example }}</button>
+    {% endfor %}
   </div>
   {% else %}
   <p>Claude is not connected yet. Everything else works without it.</p>

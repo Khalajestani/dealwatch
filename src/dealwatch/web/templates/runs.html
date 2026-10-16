@@ -1,33 +1,39 @@
 {% extends "base.html" %}
 {% block title %}Price checks · Dealwatch{% endblock %}
+{% block head %}{% if run_active %}<meta http-equiv="refresh" content="20">{% endif %}{% endblock %}
 {% block content %}
-<h1>{{ icon('play') }} Price checks</h1>
-<p class="muted">The items that are due are checked every day on the schedule in <a href="/settings">Settings</a>. Each check runs on your Claude plan.</p>
-<div class="card actions">
-  <form method="post" action="/runs/start" data-busy="Starting...">
-    <label class="inline"><input type="checkbox" name="force" value="1"> include items that are not due yet</label>
-    <button class="primary" type="submit" {% if run_active or not claude_ready %}disabled{% endif %}>{{ icon('play', 'sm') }} Check prices now</button>
+<h1>Price checks</h1>
+<p class="muted">Every day on the schedule in <a href="/settings">Settings</a>, the items that are due are checked at your shops. Each check runs on your Claude plan.</p>
+
+<div class="card">
+  {% if run_active %}
+  <div class="actions"><span class="dot running"></span><strong>A check is running.</strong><span class="muted small">This page updates itself.</span></div>
+  {% else %}
+  <form method="post" action="/runs/start" class="actions" data-busy="Starting...">
+    <button class="primary" type="submit" {% if not claude_ready %}disabled{% endif %}>{{ icon('play', 'sm') }} Check prices now</button>
+    <label class="inline"><input type="checkbox" name="force" value="1"> also items that are not due</label>
   </form>
-  {% if run_active %}<span class="badge running">a check is running, refresh in a bit</span>{% endif %}
+  {% endif %}
 </div>
+
 {% if runs %}
-<div class="table-wrap"><table>
-  <tr><th>#</th><th>Started</th><th>Trigger</th><th>Status</th><th>Items</th><th>Deals</th><th>Batches</th><th>Web lookups</th><th>Took</th></tr>
+<div class="list">
   {% for run in runs %}
-  <tr>
-    <td><a href="/runs/{{ run.id }}">#{{ run.id }}</a></td>
-    <td class="small">{{ run.started_at|localtime(tz) }}</td>
-    <td>{{ run.trigger }}</td>
-    <td><span class="badge {{ run.status }}">{{ run.status }}</span></td>
-    <td>{{ run.items_checked }}/{{ run.items_planned }}</td>
-    <td>{% if run.deal_count %}<strong>{{ run.deal_count }}</strong>{% else %}0{% endif %}</td>
-    <td>{{ run.groups_completed }}/{{ run.groups_planned }}{% if run.groups_failed %} <span class="badge danger">{{ run.groups_failed }} failed</span>{% endif %}</td>
-    <td>{{ run.web_lookups }}</td>
-    <td class="small">{% if run.duration_seconds is not none %}{{ run.duration_seconds|round|int }}s{% else %}running{% endif %}</td>
-  </tr>
+  <a class="row" href="/runs/{{ run.id }}">
+    <span class="dot {{ run.status }}"></span>
+    <div class="row-main">
+      <div class="row-title">{{ run.started_at|friendly(tz, now) }} <span class="muted small">#{{ run.id }} · {{ 'daily' if run.trigger == 'schedule' else run.trigger }}</span></div>
+      <div class="row-sub">{{ run.items_checked }} of {{ run.items_planned }} items · {{ run.web_lookups }} lookups{% if run.duration_seconds is not none %}{% set secs = run.duration_seconds|round|int %} · {{ '%ds'|format(secs) if secs < 90 else '%d min'|format((secs / 60)|round|int) }}{% endif %}{% if run.groups_failed %} · {{ run.groups_failed }} batch{{ 'es' if run.groups_failed != 1 }} failed{% endif %}</div>
+    </div>
+    <div class="row-end">
+      {% if run.deal_count %}<span class="badge deal">{{ icon('flame', 'sm') }} {{ run.deal_count }}</span>{% endif %}
+      {% if run.status != 'success' %}<span class="badge {{ run.status }}">{{ run.status }}</span>{% endif %}
+    </div>
+    {{ icon('chevron', 'sm chev') }}
+  </a>
   {% endfor %}
-</table></div>
+</div>
 {% else %}
-<p class="muted">No price checks yet.</p>
+<div class="card empty">{{ icon('play') }}<p>No price checks yet.</p></div>
 {% endif %}
 {% endblock %}

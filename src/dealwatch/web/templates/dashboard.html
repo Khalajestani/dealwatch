@@ -1,55 +1,126 @@
 {% extends "base.html" %}
+{% from "_macros.html" import tile, next_check with context %}
+{% block head %}{% if run_active %}<meta http-equiv="refresh" content="20">{% endif %}{% endblock %}
 {% block content %}
-<h1>{{ icon('home') }} Dashboard</h1>
-<div class="cards">
-  <a class="card" href="/items"><span class="stat-icon">{{ icon('list') }}</span><div><div class="stat">{{ active_count }}</div><div class="stat-label">active items ({{ item_count }} total)</div></div></a>
-  <a class="card" href="/items?status=due"><span class="stat-icon ok">{{ icon('check') }}</span><div><div class="stat">{{ due_count }}</div><div class="stat-label">due for a check</div></div></a>
-  <a class="card" href="/retailers"><span class="stat-icon info">{{ icon('store') }}</span><div><div class="stat">{{ enabled_retailers }}</div><div class="stat-label">enabled retailers</div></div></a>
-  <div class="card"><span class="stat-icon">{{ icon('calendar') }}</span><div><div class="stat stat-sm">{{ next_run.strftime('%a %d/%m %H:%M') if next_run else 'off' }}</div><div class="stat-label">next price check</div></div></div>
+<h1 class="sr-only">Home</h1>
+
+{# The last check, quietly: a dot, when it ran and what it covered. Only a failure stands out. #}
+<div class="statusline {{ 'running' if run_active else (last_run.status if last_run else '') }}">
+  {% if run_active and last_run %}
+  <a class="what" href="/runs/{{ last_run.id }}"><span class="dot running"></span><span><strong>Checking prices now</strong> · started {{ last_run.started_at|friendly(tz, now) }}</span></a>
+  {% elif last_run %}
+  <a class="what" href="/runs/{{ last_run.id }}" title="Open the report of this check"><span class="dot {{ last_run.status }}"></span><span>
+    {%- if last_run.status == 'success' %}<strong>Checked {{ last_run.started_at|friendly(tz, now) }}</strong> · {{ last_run.items_checked }} item{{ 's' if last_run.items_checked != 1 }}, no problems
+    {%- elif last_run.status == 'partial' %}<strong>Checked {{ last_run.started_at|friendly(tz, now) }}</strong> · {{ last_run.items_checked }} of {{ last_run.items_planned }} items, some were not reached
+    {%- else %}<strong>Last check failed</strong> · {{ last_run.started_at|friendly(tz, now) }}{% endif -%}
+  </span></a>
+  {% else %}
+  <span class="what"><span class="dot"></span><span>No price check yet</span></span>
+  {% endif %}
+  {% if next_run and not run_active %}<span class="next">Next check {{ next_run|friendly(tz, now) }}</span>{% endif %}
+  {% if not run_active %}
+  <form method="post" action="/runs/start" data-busy="Starting...">
+    <input type="hidden" name="next" value="/">
+    {% if not due_count %}<input type="hidden" name="force" value="1">{% endif %}
+    <button class="small" type="submit" {% if not claude_ready or not active_count %}disabled{% endif %}>{{ icon('refresh', 'sm') }} {{ 'Check %d due'|format(due_count) if due_count else 'Check all' }}</button>
+  </form>
+  {% endif %}
+  {% if last_run and last_run.status == 'failed' and last_run.error and not run_active %}<div class="err-text">{{ last_run.error }}</div>{% endif %}
 </div>
 
-<div class="card">
-  <div class="actions">
-    <form method="post" action="/runs/start" data-busy="Starting...">
-      <label class="inline"><input type="checkbox" name="force" value="1"> include items that are not due yet</label>
-      <button class="primary" type="submit" {% if run_active or not claude_ready %}disabled{% endif %}>{{ icon('play', 'sm') }} Check prices now</button>
-    </form>
-    <a class="btn" href="/items/new">{{ icon('plus', 'sm') }} Add item</a>
-    <a class="btn" href="/ask">{{ icon('message', 'sm') }} Ask</a>
-    {% if item_count == 0 %}<form method="post" action="/seed-samples"><button type="submit">{{ icon('sparkles', 'sm') }} Add sample items</button></form>{% endif %}
+{% if not claude_ready %}<div class="notice">{{ icon('alert') }}<div>Claude is not connected, so prices are not checked yet. The steps are in docs/assistant.md; everything else works without it.</div></div>{% endif %}
+{% if item_count and not enabled_retailers %}<div class="notice">{{ icon('alert') }}<div>No shop is enabled, so a check has nowhere to look. <a href="/retailers">Enable a few shops</a>.</div></div>{% endif %}
+
+{% if not item_count %}
+<div class="card empty">
+  {{ icon('tag') }}
+  <p><strong>Nothing on your list yet.</strong></p>
+  <p>Add what you buy often or want to buy at the right price. Dealwatch checks the shops for you every day.</p>
+  <div class="actions center spaced">
+    <a class="btn primary" href="/items/new">{{ icon('plus', 'sm') }} Add an item</a>
+    <form method="post" action="/seed-samples"><button type="submit">{{ icon('sparkles', 'sm') }} Try sample items</button></form>
   </div>
-  {% if not claude_ready %}<p class="muted small">Claude is not connected, so prices are not checked yet. The steps are in docs/assistant.md; everything else works without it.</p>{% endif %}
 </div>
-
-<h2>{{ icon('flame') }} Latest deals {% if last_complete %}<span class="muted small">from the check of {{ last_complete.started_at|localtime(tz) }}</span>{% endif %}</h2>
-{% if deals %}
-<div class="table-wrap"><table>
-  <tr><th>#</th><th>Item</th><th>Price</th><th>Per unit</th><th>Shop</th><th>Why</th><th></th></tr>
-  {% for obs, item in deals %}
-  <tr class="deal">
-    <td>{{ loop.index }}</td>
-    <td><a href="/items/{{ item.id }}">{{ item.display_name }}</a></td>
-    <td><strong>{{ obs.price|money(obs.currency) }}</strong>{% if obs.list_price %} <span class="muted small">reg. {{ obs.list_price|money(obs.currency) }}</span>{% endif %}</td>
-    <td>{% if obs.unit_price is not none %}{{ obs.unit_price|money(obs.currency) }}/{{ obs.unit }}{% else %}-{% endif %}</td>
-    <td>{{ obs.retailer_domain }}</td>
-    <td class="small">{{ obs.reasons or '' }}{% if obs.promo_text %} · {{ obs.promo_text }}{% endif %}{% if obs.valid_until %} · until {{ obs.valid_until.strftime('%d/%m/%Y') }}{% endif %}</td>
-    <td><a class="btn small" href="{{ obs.url }}" target="_blank" rel="noopener">{{ icon('external', 'sm') }} open</a></td>
-  </tr>
-  {% endfor %}
-</table></div>
-{% elif last_complete %}
-<p class="muted">The last check found nothing above your deal threshold. <a href="/runs/{{ last_complete.id }}">See the full report.</a></p>
 {% else %}
-<p class="muted">No completed price check yet. Add items and check the retailers list; the daily check picks them up, or press <em>Check prices now</em>.</p>
+
+{# Alerts: real deals first, then prices that dropped without being a deal. #}
+{% if deals %}
+<div class="section-head"><h2>{{ icon('flame') }} Deals <span class="count">{{ deals|length }}</span></h2>{% if last_complete %}<a href="/runs/{{ last_complete.id }}">Last report</a>{% endif %}</div>
+<div class="deals">
+  {% for obs, item in deals %}
+  {% set new = last_complete and obs.run_id == last_complete.id %}
+  <article class="deal-card{{ ' old' if not new }}">
+    <div class="deal-top">
+      {{ tile(item) }}
+      <div class="row-main">
+        <a href="/items/{{ item.id }}">{{ item.display_name }}</a>{% if new %} <span class="badge new">new</span>{% endif %}
+        <div class="row-sub">{% if not new %}found {{ obs.observed_at|friendly(tz, now, false) }} · {% endif %}{{ obs.retailer_domain }}{% if obs.promo_type != 'none' %} · {{ obs.promo_text or obs.promo_type }}{% endif %}{% if obs.valid_until %} · until {{ obs.valid_until.strftime('%d/%m') }}{% endif %}</div>
+      </div>
+      {% if obs.discount_pct and obs.discount_pct >= 1 %}<span class="deal-off">-{{ obs.discount_pct|round|int }}%</span>{% endif %}
+    </div>
+    <div class="deal-foot">
+      <div class="deal-price">
+        <span class="now">{{ obs.price|money(obs.currency) }}</span>
+        {% if obs.list_price and obs.list_price > obs.price %}<span class="was">{{ obs.list_price|money(obs.currency) }}</span>{% endif %}
+        {% if obs.unit_price is not none %}<span class="per">{{ obs.unit_price|money(obs.currency) }}/{{ obs.unit }}</span>{% endif %}
+      </div>
+      <a class="btn primary small" href="{{ obs.url }}" target="_blank" rel="noopener">Open {{ icon('external', 'sm') }}</a>
+    </div>
+    {% set why = (obs.reasons or '').split('; ')[0] %}
+    {% if why or obs.under_target %}<div class="deal-why">{% if obs.under_target and 'target' not in why %}<span class="badge ok">{{ icon('check', 'sm') }} under your target</span> {% endif %}{{ why }}</div>{% endif %}
+  </article>
+  {% endfor %}
+</div>
 {% endif %}
 
-{% if last_run %}
-<h2>{{ icon('play') }} Last check</h2>
-<div class="card">
-  <span class="badge {{ last_run.status }}">{{ last_run.status }}</span>
-  <a href="/runs/{{ last_run.id }}">#{{ last_run.id }}</a> · {{ last_run.started_at|localtime(tz) }} · {{ last_run.trigger }} ·
-  {{ last_run.items_checked }} items checked · {{ last_run.deal_count }} deals · {{ last_run.web_lookups }} web lookups
-  {% if last_run.error %}<div class="flash err flash-in">{{ last_run.error }}</div>{% endif %}
+{% if drops %}
+<div class="section-head"><h2>{{ icon('trending-down') }} Price drops</h2><a href="/tracker">Tracker</a></div>
+<div class="list">
+  {% for i in drops %}
+  <a class="row" href="/items/{{ i.item.id }}">
+    {{ tile(i.item) }}
+    <div class="row-main">
+      <div class="row-title">{{ i.item.display_name }}</div>
+      <div class="row-sub">{{ i.last.domain }}{% if i.is_new_low %} · lowest price so far{% endif %}</div>
+    </div>
+    <div class="row-end">
+      <span class="price">{{ i.last.best|money(settings.currency) }}<span class="muted small">{{ i.unit_label }}</span></span>
+      {% if i.change_vs_prev_pct is not none and i.change_vs_prev_pct < 0 %}<span class="drop small">▼ {{ i.change_vs_prev_pct|abs|round|int }}%</span>{% endif %}
+    </div>
+  </a>
+  {% endfor %}
 </div>
+{% endif %}
+
+{% if last_complete and not deals and not drops %}
+<div class="hint">{{ icon('check-circle') }}<span>No deals right now, and the last check found no price drops. Prices are where they usually are.</span></div>
+{% elif not last_complete %}
+<div class="hint">{{ icon('clock') }}<span>No finished price check yet. Deals and price drops show up here after the first one.</span></div>
+{% endif %}
+
+{# What is being checked, the next to be checked first. #}
+<div class="section-head"><h2>{{ icon('eye') }} Watching <span class="count">{{ active_count }}</span></h2><a href="/items">All items</a></div>
+{% if watching %}
+<div class="list">
+  {% for w in watching[:8] %}
+  {% set item, offer = w.item, w.offer %}
+  <a class="row" href="/items/{{ item.id }}">
+    {{ tile(item) }}
+    <div class="row-main">
+      <div class="row-title">{{ item.display_name }}</div>
+      <div class="row-sub">{% if offer %}{{ offer.retailer_domain }} · {% endif %}{% if item.last_checked_at %}checked {{ item.last_checked_at|friendly(tz, now, false) }}{% else %}not checked yet{% endif %}</div>
+    </div>
+    <div class="row-end">
+      {% if offer %}<span class="price">{% if offer.is_deal %}<span class="flame" title="A deal">{{ icon('flame', 'sm') }}</span> {% endif %}{{ offer.price|money(offer.currency) }}</span>{% else %}<span class="faint small">no price yet</span>{% endif %}
+      {{ next_check(item, w.due, w.due_at, now) }}
+    </div>
+  </a>
+  {% endfor %}
+  {% if watching|length > 8 %}<a class="row" href="/items"><div class="row-main muted">{{ watching|length - 8 }} more</div>{{ icon('chevron', 'sm') }}</a>{% endif %}
+</div>
+{% else %}
+<div class="card empty"><p>Everything is paused. <a href="/items?status=paused">Resume an item</a> to have it checked.</p></div>
+{% endif %}
+<p class="small muted">{{ icon('play', 'sm') }} <a href="/runs">Past checks and their reports</a></p>
 {% endif %}
 {% endblock %}

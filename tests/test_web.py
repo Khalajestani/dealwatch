@@ -1,5 +1,6 @@
 import json
 import time
+from html.parser import HTMLParser
 from pathlib import Path
 
 import pytest
@@ -47,6 +48,7 @@ def test_pages_render(client):
         "/tracker",
         "/settings",
         "/items/1",
+        "/items/1/edit",
     ]:
         r = client.get(path)
         assert r.status_code == 200, path
@@ -97,12 +99,29 @@ def test_add_and_edit_item(client, session_factory):
     with session_factory() as s:
         item = s.scalar(select(Item).where(Item.name == "Bin bags"))
         assert item.target_price == 3.5 and item.priority == "need" and item.bulk_ok
+        item.reference_url, item.notes = "https://www.bol.com/p/1", "the blue ones"
+        s.commit()
+
+    edit = client.get(f"/items/{item.id}/edit").text
+    add = client.get("/items/new?mode=manual").text
+    for page in (edit, add):  # one form for both, asking only what the checks use
+        assert 'name="search_hints"' in page and 'name="target_unit_price"' in page
+        assert 'name="notes" value' not in add and '<input type="url"' not in page
+    assert 'value="Bin bags"' in edit and 'name="reference_url" value="https://www.bol.com/p/1"' in edit
+    client.post(f"/items/{item.id}", data=_form_of(edit) | {"search_hints": "60 liter, 20 stuks"})
+    with session_factory() as s:
+        item = s.get(Item, item.id)
+        assert item.search_hints == "60 liter, 20 stuks" and item.target_price == 3.5
+        assert (item.reference_url, item.notes) == ("https://www.bol.com/p/1", "the blue ones"), "kept as they were"
+
     r = client.post(
         f"/items/{item.id}",
         data={"name": "Bin bags", "category": "household", "priority": "stock_up", "target_price": "abc"},
         follow_redirects=False,
     )
-    assert "err=" in r.headers["location"]
+    assert r.status_code == 400 and "Target price" in r.text and 'value="abc"' in r.text, "typed values stay"
+    r = client.post("/items", data={"name": "", "brand": "Komo"}, follow_redirects=False)
+    assert r.status_code == 400 and "a name is required" in r.text and 'value="Komo"' in r.text
     for action in ("bought", "pause", "resume", "check_next"):
         assert (
             client.post(f"/items/{item.id}/action", data={"action": action}, follow_redirects=False).status_code == 303
@@ -113,6 +132,39 @@ def test_add_and_edit_item(client, session_factory):
     client.post(f"/items/{item.id}/action", data={"action": "delete"}, follow_redirects=False)
     with session_factory() as s:
         assert s.get(Item, item.id) is None
+
+
+class _FormReader(HTMLParser):
+    """Collects what a form sends as it stands: text and hidden fields, ticked boxes, chosen options."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.data: dict[str, str] = {}
+        self.select: str | None = None
+
+    def handle_starttag(self, tag, attrs):
+        a = dict(attrs)
+        if tag == "input" and a.get("name") and a.get("type") != "file":
+            if a.get("type") not in ("checkbox", "radio"):
+                self.data[a["name"]] = a.get("value") or ""
+            elif "checked" in a:
+                self.data[a["name"]] = a.get("value") or "on"
+        elif tag == "select":
+            self.select = a["name"]
+            self.data.setdefault(self.select, "")
+        elif tag == "option" and self.select and "selected" in a:
+            self.data[self.select] = a.get("value") or ""
+
+    def handle_endtag(self, tag):
+        if tag == "select":
+            self.select = None
+
+
+def _form_of(page: str) -> dict:
+    """The values the item form on a page would send unchanged."""
+    reader = _FormReader()
+    reader.feed(page.split('class="item-form"', 1)[1].split("</form>", 1)[0])
+    return reader.data
 
 
 def test_smart_entry_fills_the_review_card_and_keeps_the_photo_until_add(client, fake_claude, env):
@@ -262,7 +314,15 @@ def test_background_check_report_tracker_and_exports(client, session_factory):
         and "All offers seen" in detail.text
         and "What Claude searched and read" in detail.text
     )
-    assert "Latest deals" in client.get("/").text
+    home = client.get("/").text
+    assert "Checked today" in home and "no problems" in home and f'href="/runs/{run.id}"' in home
+    assert ('class="deal-card"' in home) == bool(run.deal_count), "the deals this check found, marked new"
+    assert home.count('class="row"') >= 3 and "Watching" in home
+    with session_factory() as s:
+        due_now = s.scalar(select(Item).where(Item.name == "Kitchen towels"))
+        due_now.last_checked_at = None
+        s.commit()
+    assert "Check 1 due" in client.get("/").text and "next check" in client.get("/items?status=due").text
     assert client.get(f"/runs/{run.id}/report.md").text.startswith("# Dealwatch report")
 
     csv_text = client.get("/export/price_points.csv").text

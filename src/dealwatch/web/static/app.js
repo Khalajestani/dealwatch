@@ -19,8 +19,12 @@
       form.querySelector("button[type=submit]")?.after(note);
     }));
 
-  // Tabs (add item page).
-  const tabs = document.querySelectorAll(".tabs a[data-tab]");
+  // The More menu in the phone tab bar closes on a tap anywhere else.
+  document.querySelectorAll("details[data-close-outside]").forEach((menu) =>
+    document.addEventListener("click", (e) => { if (menu.open && !menu.contains(e.target)) menu.open = false; }));
+
+  // Say it or fill in the form (add item page).
+  const tabs = document.querySelectorAll("a[data-tab]");
   tabs.forEach((t) => t.addEventListener("click", (e) => {
     e.preventDefault();
     tabs.forEach((x) => x.classList.toggle("active", x === t));
@@ -107,9 +111,9 @@
   });
 
   // Ask: an example fills the box.
-  document.querySelectorAll("[data-example]").forEach((li) => li.addEventListener("click", () => {
+  document.querySelectorAll("[data-example]").forEach((example) => example.addEventListener("click", () => {
     const box = document.getElementById("question");
-    if (box) { box.value = li.textContent; box.focus(); }
+    if (box) { box.value = example.textContent; box.focus(); }
   }));
 
   // A select with data-remember keeps its choice on this device (the model picker on Ask).

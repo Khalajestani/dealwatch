@@ -107,15 +107,20 @@ class RunPlan:
         }
 
 
+def due_at(item: Item, settings: Settings) -> datetime | None:
+    """When an active item is next due: after its interval and any snooze. None means due now (never checked)."""
+    times = [item.snooze_until] if item.snooze_until else []
+    if item.last_checked_at is not None:
+        interval_days = item.check_interval_days or settings.interval_for(item.priority)
+        times.append(item.last_checked_at + timedelta(days=interval_days) - DUE_SLACK)
+    return max(times, default=None)
+
+
 def is_due(item: Item, now: datetime, settings: Settings) -> bool:
     if not item.active:
         return False
-    if item.snooze_until and item.snooze_until > now:
-        return False
-    if item.last_checked_at is None:
-        return True
-    interval_days = item.check_interval_days or settings.interval_for(item.priority)
-    return item.last_checked_at + timedelta(days=interval_days) - DUE_SLACK <= now
+    at = due_at(item, settings)
+    return at is None or at <= now
 
 
 def _urgency_key(item: Item) -> tuple:

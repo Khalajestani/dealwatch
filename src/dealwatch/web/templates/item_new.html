@@ -1,36 +1,30 @@
 {% extends "base.html" %}
-{% from "_macros.html" import item_fields, talk_box with context %}
+{% from "_macros.html" import item_form, talk_box with context %}
 {% block title %}Add item · Dealwatch{% endblock %}
 {% block content %}
-<p><a href="/items">{{ icon('arrow-left', 'sm') }} Items</a></p>
-<h1>{{ icon('plus') }} Add an item</h1>
-<p class="muted">Only the name is required. Everything lands on a review card first, so nothing is saved until you confirm.</p>
+<a class="back" href="/items">{{ icon('arrow-left', 'sm') }} Items</a>
+<h1>Add an item</h1>
 
-<div class="card">
-  <div class="tabs">
-    <a href="?mode=smart" data-tab="smart" class="{{ 'active' if mode == 'smart' else '' }}">{{ icon('sparkles', 'sm') }} Say it or snap it</a>
-    <a href="?mode=manual" data-tab="manual" class="{{ 'active' if mode == 'manual' else '' }}">{{ icon('edit', 'sm') }} Fill in the form</a>
-  </div>
+<nav class="seg spaced" aria-label="How to add">
+  <a href="?mode=smart" data-tab="smart" class="{{ 'active' if mode == 'smart' }}">{{ icon('sparkles', 'sm') }} Say it or snap it</a>
+  <a href="?mode=manual" data-tab="manual" class="{{ 'active' if mode == 'manual' }}">{{ icon('edit', 'sm') }} Type it in</a>
+</nav>
 
-  <div class="panel {{ 'active' if mode == 'smart' else '' }}" data-panel="smart">
+<div class="card spaced">
+  <div class="panel {{ 'active' if mode == 'smart' }}" data-panel="smart">
     {% if claude_ready %}
     <form method="post" action="/items/review" enctype="multipart/form-data" data-busy="Claude is reading it...">
-      <input type="hidden" name="mode" value="smart">
-      {{ talk_box("text", "Page toilet paper, 24 rolls, buy when under 30 cents a roll. Or paste a product link.", photo=true) }}
-      <div class="actions"><button class="primary" type="submit">{{ icon('sparkles', 'sm') }} Fill in the review card</button></div>
-      <p class="help">Type, tap the mic and talk, add a photo of the pack with the label in view, or paste a product link (Claude reads that page). It fills in name, brand, category, pack, Dutch search hints and any target price you named. It runs on your Claude plan and takes a few seconds.</p>
+      <p class="muted flush">Say what to watch and when you would buy it, add a photo of the pack, or paste a product link. You check what Claude fills in before anything is added.</p>
+      {{ talk_box("text", "Page toilet paper, 24 rolls, buy when under 30 cents a roll", photo=true) }}
+      <div class="form-foot"><button class="primary" type="submit">{{ icon('sparkles', 'sm') }} Fill it in for me</button></div>
     </form>
     {% else %}
-    <div class="notice">{{ icon('alert') }}<div>Claude is not connected yet, so this needs the form for now. The steps to connect it to your Claude plan are in docs/assistant.md.</div></div>
+    <div class="notice flush">{{ icon('alert') }}<div>Claude is not connected yet, so this needs the form for now. The steps to connect it to your Claude plan are in docs/assistant.md.</div></div>
     {% endif %}
   </div>
 
-  <div class="panel {{ 'active' if mode == 'manual' else '' }}" data-panel="manual">
-    <form method="post" action="/items/review" class="grid">
-      <input type="hidden" name="mode" value="manual">
-      {{ item_fields(prefill, settings) }}
-      <div class="wide actions"><button class="primary" type="submit">{{ icon('check', 'sm') }} Review</button><span class="help">Similar items you already have show up under the name as you type.</span></div>
-    </form>
+  <div class="panel {{ 'active' if mode == 'manual' }}" data-panel="manual">
+    {{ item_form(prefill, '/items', 'Add item') }}
   </div>
 </div>
 {% endblock %}

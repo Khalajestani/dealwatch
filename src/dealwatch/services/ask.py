@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from .. import items as item_store
 from ..items import Action
 from ..models import ChatMessage, Item, Observation, utcnow
-from ..queries import deals_of, last_complete_run, latest_best_offers
+from ..queries import current_deals, last_complete_run, latest_best_offers
 from ..settings import Settings
 from .claude import Claude, Unavailable
 from .insights import item_insight
@@ -155,16 +155,14 @@ def make_tools(session: Session, settings: Settings) -> list[Tool]:
 
     @tool
     def latest_deals() -> str:
-        """The deals of the latest completed price check, best first, with the reasons."""
-        run = last_complete_run(session)
-        if run is None:
-            return "No price check has completed yet."
-        deals = deals_of(session, run)
-        when = local_date(run.started_at, settings.timezone)
+        """The current deals, best first, with the reasons: each item's deal from its most recent check, unless the
+        offer has ended."""
+        deals = current_deals(session, utcnow().date())
         if not deals:
-            return f"The check of {when} found no deals."
-        return f"Check of {when}:\n" + "\n".join(
-            f"{item.display_name}: {money(o.price, settings.currency)} at {o.retailer_domain} ({o.reasons})"
+            return "No current deals." if last_complete_run(session) else "No price check has completed yet."
+        return "\n".join(
+            f"{item.display_name}: {money(o.price, settings.currency)} at {o.retailer_domain}, found "
+            f"{local_date(o.observed_at, settings.timezone)} ({o.reasons})"
             for o, item in deals
         )
 

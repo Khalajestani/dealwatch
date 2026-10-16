@@ -1,20 +1,21 @@
 {% extends "base.html" %}
 {% block title %}Check #{{ run.id }} · Dealwatch{% endblock %}
+{% block head %}{% if run.status == 'running' %}<meta http-equiv="refresh" content="20">{% endif %}{% endblock %}
 {% block content %}
-<p><a href="/runs">{{ icon('arrow-left', 'sm') }} Price checks</a></p>
-<h1>Check #{{ run.id }} <span class="badge {{ run.status }}">{{ run.status }}</span></h1>
-<div class="cards">
-  <div class="card"><span class="stat-icon warn">{{ icon('flame') }}</span><div><div class="stat">{{ run.deal_count }}</div><div class="stat-label">deals</div></div></div>
-  <div class="card"><span class="stat-icon">{{ icon('list') }}</span><div><div class="stat">{{ run.items_checked }}<span class="muted small">/{{ run.items_planned }}</span></div><div class="stat-label">items checked</div></div></div>
-  <div class="card"><span class="stat-icon info">{{ icon('search') }}</span><div><div class="stat">{{ run.web_lookups }}</div><div class="stat-label">web lookups</div></div></div>
+<a class="back" href="/runs">{{ icon('arrow-left', 'sm') }} Price checks</a>
+<h1>Check of {{ run.started_at|friendly(tz, now) }} <span class="badge {{ run.status }}">{{ run.status }}</span></h1>
+<div class="kpis">
+  <div class="card"><div class="v">{{ run.deal_count }}</div><div class="l">{{ icon('flame', 'sm') }} deals</div></div>
+  <div class="card"><div class="v">{{ run.items_checked }}<span class="muted small">/{{ run.items_planned }}</span></div><div class="l">{{ icon('list', 'sm') }} items checked</div></div>
+  <div class="card"><div class="v">{{ run.web_lookups }}</div><div class="l">{{ icon('search', 'sm') }} web lookups</div></div>
 </div>
-<p class="muted small">{{ run.started_at|localtime(tz) }} · {{ run.trigger }} · model {{ run.model }} · effort {{ run.effort }} · mode {{ run.search_mode }}{% if run.duration_seconds is not none %} · {{ run.duration_seconds|round|int }}s{% endif %} · <a href="/runs/{{ run.id }}/report.md">report.md</a></p>
+<p class="muted small">#{{ run.id }} · {{ run.started_at|localtime(tz) }} · {{ run.trigger }} · model {{ run.model }} · effort {{ run.effort }} · mode {{ run.search_mode }}{% if run.duration_seconds is not none %} · {{ run.duration_seconds|round|int }}s{% endif %} · <a href="/runs/{{ run.id }}/report.md">report.md</a></p>
 {% if run.error %}<div class="flash err">{{ run.error }}</div>{% endif %}
 
 {% if report %}
 <div class="report">{{ report.html|safe }}</div>
 {% else %}
-<p class="muted">{% if run.status == 'running' %}The check is still running: refresh in a minute.{% else %}No report.{% endif %}</p>
+<div class="hint">{{ icon('clock') }}<span>{% if run.status == 'running' %}The check is still running. This page updates itself.{% else %}No report.{% endif %}</span></div>
 {% endif %}
 
 {% if log.get('errors') %}
@@ -22,15 +23,15 @@
 {% endif %}
 
 {% if observations %}
-<h2>{{ icon('tag') }} All offers seen ({{ observations|length }})</h2>
+<h2>{{ icon('tag') }} All offers seen <span class="count">{{ observations|length }}</span></h2>
 <div class="table-wrap"><table>
-  <tr><th>Item</th><th>Shop</th><th>Price</th><th>Per unit</th><th>Promo</th><th>vs baseline</th><th>Conf.</th><th>Listing</th></tr>
+  <tr><th>Item</th><th>Shop</th><th>Price</th><th>Per unit</th><th>Promo</th><th>vs usual</th><th>Sure</th><th>Listing</th></tr>
   {% for obs, item in observations %}
-  <tr class="{{ 'deal' if obs.is_deal else '' }}">
+  <tr class="{{ 'deal' if obs.is_deal }}">
     <td><a href="/items/{{ item.id }}">{{ item.display_name }}</a></td>
     <td>{{ obs.retailer_domain }}</td>
-    <td>{{ obs.price|money(obs.currency) }}{% if obs.list_price %} <span class="muted small">reg. {{ obs.list_price|money(obs.currency) }}</span>{% endif %}</td>
-    <td>{% if obs.unit_price is not none %}{{ obs.unit_price|money(obs.currency) }}/{{ obs.unit }}{% else %}-{% endif %}</td>
+    <td class="num">{{ obs.price|money(obs.currency) }}{% if obs.list_price %} <span class="muted small">reg. {{ obs.list_price|money(obs.currency) }}</span>{% endif %}</td>
+    <td class="num">{% if obs.unit_price is not none %}{{ obs.unit_price|money(obs.currency) }}/{{ obs.unit }}{% else %}-{% endif %}</td>
     <td class="small">{% if obs.promo_type != 'none' %}{{ obs.promo_type }}{% if obs.promo_text %}: {{ obs.promo_text }}{% endif %}{% endif %}</td>
     <td class="small">{{ obs.discount_pct|pct }}{% if obs.reasons %}<div class="muted">{{ obs.reasons }}</div>{% endif %}</td>
     <td class="small">{{ (obs.confidence * 100)|round|int }}%</td>
@@ -41,14 +42,14 @@
 {% endif %}
 
 {% if log.get('lookups') %}
-<details><summary>What Claude searched and read</summary>
-<ul>{% for batch, lookups in log['lookups'].items() %}<li>Batch {{ batch }}: {% for q in lookups %}<code>{{ q }}</code>{% if not loop.last %}, {% endif %}{% endfor %}</li>{% endfor %}</ul>
+<details class="more-block"><summary>What Claude searched and read</summary>
+<div class="card"><ul class="small flush">{% for batch, lookups in log['lookups'].items() %}<li>Batch {{ batch }}: {% for q in lookups %}<code>{{ q }}</code>{% if not loop.last %}, {% endif %}{% endfor %}</li>{% endfor %}</ul></div>
 </details>
 {% endif %}
 {% if log.get('dropped_offers') %}
-<details><summary>Offers discarded by the domain filter ({{ log['dropped_offers']|length }})</summary>
-<ul>{% for d in log['dropped_offers'] %}<li class="small">{{ d.item }}: {{ d.reason }} ({{ d.url }})</li>{% endfor %}</ul>
+<details class="more-block"><summary>Offers dropped by the shop filter <span class="faint">{{ log['dropped_offers']|length }}</span></summary>
+<div class="card"><ul class="small flush">{% for d in log['dropped_offers'] %}<li>{{ d.item }}: {{ d.reason }} ({{ d.url }})</li>{% endfor %}</ul></div>
 </details>
 {% endif %}
-<details><summary>Plan (batches, domains, budgets)</summary><pre>{{ plan_pretty }}</pre></details>
+<details class="more-block"><summary>Plan (batches, shops, budgets)</summary><pre>{{ plan_pretty }}</pre></details>
 {% endblock %}

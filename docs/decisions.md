@@ -184,3 +184,29 @@ lacks on start. `deploy/ship.sh restore` runs it on the Pi with the app stopped 
 `make pi-backups` writes a fresh archive before copying, so the Mac gets the state of that moment.
 [recovery.md](recovery.md) is written for an agent: rules (copy first, never edit on the Pi, code before data) and
 the usual cases. ENDUR∆NCE and TOOL·E work the same way.
+
+## D27. A mobile-first redesign: a quiet status line, alerts, what is watched (16/10/2026)
+
+The owner found the dashboard and the overall UI hard to read on the phone (R3). Home is now one status line for the
+last check (a green dot when it went well, red with the reason when it failed, Check now beside it), then the alerts
+(deals, price drops), then Watching: the active items, the next to be checked first. The four stat tiles are gone;
+their numbers are in the Watching count and the status line. Lists are rows with a category tile instead of wide
+tables; tables stay only on the detail pages, where they scroll sideways. On a phone a bottom tab bar (Home, Items,
+Add, Ask, More) replaces the two rows of pills, and the CSV links moved from the footer to the Tracker page.
+
+- **Deals are each item's deal from its latest check**, not only the last check's: a daily check takes only the items
+  that are due, so a one-item check emptied the dashboard while other deals were still on. Ended promotions are left
+  out; the last check's finds are marked new. Ask's latest_deals reads the same (`queries.current_deals`).
+- **One item form for adding and editing** (`item_form`), in three short sections, asking only what the checks use:
+  name, brand, category and search words; priority as a switch that shows each interval; the targets and bulk packs;
+  the check interval folded away. Notes and the product link are not asked any more (the search does not read them);
+  what the smart entry or Ask put there is kept and shown on the item page. Editing is its own page like Add, with
+  Delete at the bottom; a wrong value shows the form again with what was typed.
+- **Typing an item in adds it directly.** The live similar-items hint under the name already warns of duplicates, so
+  the review card stays for the smart entry, where Claude filled the fields in (D10 still holds for that).
+- Colour: the indigo accent stays (D12), a warm orange marks deals, and each category has its own tint, mixed into
+  the surface so both themes read. Fields use 16 px text so the iPhone does not zoom in, and buttons are at least
+  42 px high.
+
+To change: the parts are in `style.css` and `_macros.html`; the home page's choices are in `dashboard.html` and the
+`dashboard` route.

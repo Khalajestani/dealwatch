@@ -2,47 +2,60 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>{% block title %}Dealwatch{% endblock %}</title>
 <link rel="icon" href="/static/icon-192.png">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Dealwatch">
-<meta name="theme-color" content="#5b6ee6">
+<meta name="theme-color" content="#eaedff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0e1119" media="(prefers-color-scheme: dark)">
+{% block head %}{% endblock %}
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
 {% include "_icons.html" %}
+{% set more_pages = {'tracker': ('/tracker', 'chart', 'Tracker'), 'runs': ('/runs', 'play', 'Checks'), 'retailers': ('/retailers', 'store', 'Shops'), 'settings': ('/settings', 'sliders', 'Settings')} %}
 <header class="topbar">
-  <div class="brandbar">
-    <a class="brand" href="/"><span class="brand-mark">{{ icon('cart') }}</span><span>Dealwatch<div class="brand-sub">better prices, planned ahead</div></span></a>
+  <div class="topbar-in">
+    <a class="brand" href="/"><span class="brand-mark">{{ icon('tag') }}</span>Dealwatch</a>
+    {% if nav is defined %}
+    <nav class="topnav" aria-label="Main">
+      <a href="/" class="{{ 'active' if nav == 'dashboard' }}">{{ icon('home', 'sm') }} Home</a>
+      <a href="/items" class="{{ 'active' if nav == 'items' }}">{{ icon('list', 'sm') }} Items</a>
+      <a href="/ask" class="{{ 'active' if nav == 'ask' }}">{{ icon('message', 'sm') }} Ask</a>
+      {% for key, (href, ic, label) in more_pages.items() %}<a href="{{ href }}" class="{{ 'active' if nav == key }}">{{ icon(ic, 'sm') }} {{ label }}</a>{% endfor %}
+    </nav>
+    {% endif %}
     {% block header_actions %}
-    <div class="status">
-      {% if run_active %}<span class="badge running">{{ icon('refresh', 'sm') }} price check running</span>{% endif %}
+    <div class="top-actions">
+      {% if run_active %}<a class="badge running" href="/runs">{{ icon('refresh', 'sm') }} checking prices</a>{% endif %}
       {% if not claude_ready %}<span class="badge danger" title="See docs/assistant.md">{{ icon('alert', 'sm') }} Claude not connected</span>{% endif %}
-      <a class="btn primary small" href="/items/new">{{ icon('plus', 'sm') }} Add item</a>
+      <a class="btn primary small hide-mobile" href="/items/new">{{ icon('plus', 'sm') }} Add item</a>
     </div>
     {% endblock %}
   </div>
-  {% if nav is defined %}
-  <nav class="pills">
-    <a href="/" class="{{ 'active' if nav == 'dashboard' else '' }}">{{ icon('home', 'sm') }} Dashboard</a>
-    <a href="/items" class="{{ 'active' if nav == 'items' else '' }}">{{ icon('list', 'sm') }} Items</a>
-    <a href="/ask" class="{{ 'active' if nav == 'ask' else '' }}">{{ icon('message', 'sm') }} Ask</a>
-    <a href="/tracker" class="{{ 'active' if nav == 'tracker' else '' }}">{{ icon('chart', 'sm') }} Tracker</a>
-    <a href="/runs" class="{{ 'active' if nav == 'runs' else '' }}">{{ icon('play', 'sm') }} Checks</a>
-    <a href="/retailers" class="{{ 'active' if nav == 'retailers' else '' }}">{{ icon('store', 'sm') }} Retailers</a>
-    <a href="/settings" class="{{ 'active' if nav == 'settings' else '' }}">{{ icon('sliders', 'sm') }} Settings</a>
-  </nav>
-  {% endif %}
 </header>
 <main>
   {% if msg %}<div class="flash ok">{{ icon('check', 'sm') }} {{ msg }}</div>{% endif %}
   {% if err %}<div class="flash err">{{ icon('alert', 'sm') }} {{ err }}</div>{% endif %}
   {% block content %}{% endblock %}
 </main>
-<footer>Dealwatch · export <a href="/export/price_points.csv">price points</a>, <a href="/export/observations.csv">observations</a>, <a href="/export/items.csv">items</a>, <a href="/export/runs.csv">checks</a></footer>
+{% if nav is defined %}
+<nav class="tabbar" aria-label="Main">
+  <a href="/" class="{{ 'active' if nav == 'dashboard' }}">{{ icon('home') }}<span>Home</span></a>
+  <a href="/items" class="{{ 'active' if nav == 'items' }}">{{ icon('list') }}<span>Items</span></a>
+  <a href="/items/new" class="tab-add" aria-label="Add item">{{ icon('plus') }}<span>Add</span></a>
+  <a href="/ask" class="{{ 'active' if nav == 'ask' }}">{{ icon('message') }}<span>Ask</span></a>
+  <details class="tab-more {{ 'active' if nav in more_pages }}" data-close-outside>
+    <summary>{{ icon('more') }}<span>More</span></summary>
+    <div class="more-menu">
+      {% for key, (href, ic, label) in more_pages.items() %}<a href="{{ href }}" class="{{ 'active' if nav == key }}">{{ icon(ic) }} {{ label }}</a>{% endfor %}
+    </div>
+  </details>
+</nav>
+{% endif %}
 <script src="/static/tracker.js" defer></script>
 <script src="/static/app.js" defer></script>
 </body>

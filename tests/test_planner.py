@@ -1,9 +1,10 @@
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 
 from dealwatch.models import Item, Retailer
-from dealwatch.services.planner import build_plan, is_due
+from dealwatch.services.planner import DUE_SLACK, build_plan, due_at, is_due
+from dealwatch.services.report import friendly_time
 from dealwatch.settings import Settings
 
 NOW = datetime(2026, 9, 14, 7, 0)
@@ -25,6 +26,25 @@ def test_is_due_rules():
         s,
     )
     assert not is_due(Item(name="a", active=True, snooze_until=NOW + timedelta(days=3)), NOW, s)
+
+
+def test_due_at_takes_the_later_of_interval_and_snooze():
+    s = Settings()
+    checked = NOW - timedelta(days=2)
+    assert due_at(Item(name="a", priority="stock_up"), s) is None, "never checked: due now"
+    assert due_at(Item(name="a", priority="stock_up", last_checked_at=checked), s) == checked + timedelta(7) - DUE_SLACK
+    snoozed = Item(name="a", priority="need", last_checked_at=checked, snooze_until=NOW + timedelta(days=30))
+    assert due_at(snoozed, s) == NOW + timedelta(days=30)
+
+
+def test_friendly_times_in_the_local_zone():
+    tz = "Europe/Amsterdam"
+    assert friendly_time(NOW, tz, NOW) == "today 09:00"
+    assert friendly_time(NOW - timedelta(days=1), tz, NOW, clock=False) == "yesterday"
+    assert friendly_time(NOW.replace(tzinfo=UTC) + timedelta(days=1), tz, NOW) == "tomorrow 09:00"
+    assert friendly_time(NOW + timedelta(days=3), tz, NOW) == "Thu 17/09"
+    assert friendly_time(NOW - timedelta(days=30), tz, NOW) == "15/08/2026"
+    assert friendly_time(None, tz) == "-"
 
 
 def test_groups_by_category_with_category_aware_domains(session_factory):

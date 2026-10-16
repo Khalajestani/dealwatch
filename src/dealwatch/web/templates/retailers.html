@@ -1,50 +1,53 @@
 {% extends "base.html" %}
-{% block title %}Retailers · Dealwatch{% endblock %}
+{% block title %}Shops · Dealwatch{% endblock %}
 {% block content %}
-<h1>{{ icon('store') }} Retailers</h1>
+<h1>Shops <span class="count">{{ retailers|selectattr('status', 'equalto', 'enabled')|list|length }}</span></h1>
 <p class="muted">Search mode is <strong>{{ settings.search_mode }}</strong>
-{% if settings.search_mode == 'allowlist' %}: Claude may only search and open pages of <em>enabled</em> shops. <em>Disabled</em> = temporarily off, <em>blocked</em> = never use (and any offer from it is discarded).{% else %}: the whole web is searched except <em>blocked</em> shops; enabled shops are suggested to the model.{% endif %}
-Category tags limit which batches a shop is used for (empty = all categories). Change the mode in <a href="/settings">Settings</a>.</p>
+{%- if settings.search_mode == 'allowlist' %}: Claude only searches and opens pages of <em>enabled</em> shops. <em>Disabled</em> is off for now, <em>blocked</em> is never used (offers from it are dropped).{% else %}: the whole web is searched except <em>blocked</em> shops; enabled shops are suggested to Claude.{% endif %}
+Category tags limit which batches a shop is used for (none means all). The mode is in <a href="/settings">Settings</a>.</p>
 
-<details class="card">
+<details class="more-block">
   <summary>{{ icon('plus', 'sm') }} Add a shop</summary>
-  <form method="post" action="/retailers" class="grid spaced">
-    <div><label>Name</label><input type="text" name="name" placeholder="Blokker"></div>
-    <div><label>Domain *</label><input type="text" name="domain" required placeholder="blokker.nl"></div>
-    <div><label>Status</label><select name="status">{% for s in statuses %}<option value="{{ s }}">{{ s }}</option>{% endfor %}</select></div>
-    <div class="wide"><label>Categories (comma separated, blank = all): {{ categories|map(attribute=0)|join(', ') }}</label><input type="text" name="categories" placeholder="household,tools_diy"></div>
-    <div class="wide"><label>Notes</label><input type="text" name="notes"></div>
-    <div><button class="primary" type="submit">{{ icon('plus', 'sm') }} Add</button></div>
-  </form>
+  <div class="card">
+    <form method="post" action="/retailers" class="grid">
+      <div><label for="r-domain">Domain</label><input id="r-domain" type="text" name="domain" required placeholder="blokker.nl" autocomplete="off"></div>
+      <div><label for="r-name">Name <span class="faint">optional</span></label><input id="r-name" type="text" name="name" placeholder="Blokker" autocomplete="off"></div>
+      <div><label for="r-status">Status</label><select id="r-status" name="status">{% for s in statuses %}<option value="{{ s }}">{{ s }}</option>{% endfor %}</select></div>
+      <div class="wide"><label for="r-cats">Categories <span class="faint">comma separated, blank for all</span></label><input id="r-cats" type="text" name="categories" placeholder="household,tools_diy" autocomplete="off"><div class="help">{{ categories|map(attribute=0)|join(', ') }}</div></div>
+      <div class="wide"><label for="r-notes">Notes</label><input id="r-notes" type="text" name="notes"></div>
+      <div><button class="primary" type="submit">{{ icon('plus', 'sm') }} Add shop</button></div>
+    </form>
+  </div>
 </details>
 
-<div class="table-wrap"><table>
-  <tr><th>Shop</th><th>Status</th><th>Categories</th><th>Notes</th><th>Actions</th></tr>
+<div class="list">
   {% for r in retailers %}
-  <tr class="{{ 'inactive' if r.status != 'enabled' else '' }}">
-    <td><strong>{{ r.name }}</strong><div class="muted small">{{ r.domain }}</div></td>
-    <td><span class="badge {{ r.status }}">{{ r.status }}</span></td>
-    <td><div class="chips">{% for c in r.category_list %}<span>{{ c }}</span>{% else %}<span class="muted small">all</span>{% endfor %}</div></td>
-    <td class="small">{{ r.notes or '' }}</td>
-    <td>
+  <details class="shop">
+    <summary class="row {{ 'inactive' if r.status != 'enabled' }}">
+      <div class="row-main">
+        <div class="row-title">{{ r.name }}</div>
+        <div class="row-sub">{{ r.domain }} · {{ r.category_list|map('replace', '_', ' ')|join(', ') if r.category_list else 'all categories' }}</div>
+      </div>
+      <span class="badge {{ r.status }}">{{ r.status }}</span>
+    </summary>
+    <div class="shop-body">
+      {% if r.notes %}<p class="small muted flush">{{ r.notes }}</p>{% endif %}
       <div class="actions">
         {% for s in statuses if s != r.status %}
-        <form method="post" action="/retailers/{{ r.id }}"><input type="hidden" name="action" value="{{ s }}"><button class="small {{ 'ok' if s == 'enabled' else ('danger' if s == 'blocked' else '') }}" type="submit">{{ icon('check' if s == 'enabled' else ('x' if s == 'blocked' else 'pause'), 'sm') }} {{ s }}</button></form>
+        <form method="post" action="/retailers/{{ r.id }}"><input type="hidden" name="action" value="{{ s }}"><button class="small {{ 'ok' if s == 'enabled' else ('danger' if s == 'blocked' else '') }}" type="submit">{{ icon('check' if s == 'enabled' else ('x' if s == 'blocked' else 'pause'), 'sm') }} {{ {'enabled': 'Enable', 'disabled': 'Disable', 'blocked': 'Block'}[s] }}</button></form>
         {% endfor %}
-        <form method="post" action="/retailers/{{ r.id }}" data-confirm="Remove {{ r.domain }}?"><input type="hidden" name="action" value="delete"><button class="small danger" type="submit">{{ icon('trash', 'sm') }} remove</button></form>
       </div>
-      <details><summary class="small">{{ icon('edit', 'sm') }} edit</summary>
-        <form method="post" action="/retailers/{{ r.id }}" class="grid spaced">
-          <input type="hidden" name="action" value="save">
-          <div><label>Name</label><input type="text" name="name" value="{{ r.name }}"></div>
-          <div><label>Sort order</label><input type="text" inputmode="numeric" name="sort_order" value="{{ r.sort_order }}"></div>
-          <div class="wide"><label>Categories</label><input type="text" name="categories" value="{{ r.categories or '' }}"></div>
-          <div class="wide"><label>Notes</label><input type="text" name="notes" value="{{ r.notes or '' }}"></div>
-          <div><button class="small primary" type="submit">Save</button></div>
-        </form>
-      </details>
-    </td>
-  </tr>
+      <form method="post" action="/retailers/{{ r.id }}" class="grid spaced">
+        <input type="hidden" name="action" value="save">
+        <div><label for="r{{ r.id }}-name">Name</label><input id="r{{ r.id }}-name" type="text" name="name" value="{{ r.name }}"></div>
+        <div><label for="r{{ r.id }}-order">Order</label><input id="r{{ r.id }}-order" type="text" inputmode="numeric" name="sort_order" value="{{ r.sort_order }}"></div>
+        <div class="wide"><label for="r{{ r.id }}-cats">Categories</label><input id="r{{ r.id }}-cats" type="text" name="categories" value="{{ r.categories or '' }}"></div>
+        <div class="wide"><label for="r{{ r.id }}-notes">Notes</label><input id="r{{ r.id }}-notes" type="text" name="notes" value="{{ r.notes or '' }}"></div>
+        <div class="wide actions"><button class="small primary" type="submit">{{ icon('check', 'sm') }} Save</button></div>
+      </form>
+      <form method="post" action="/retailers/{{ r.id }}" data-confirm="Remove {{ r.domain }}?" class="spaced"><input type="hidden" name="action" value="delete"><button class="small danger" type="submit">{{ icon('trash', 'sm') }} Remove shop</button></form>
+    </div>
+  </details>
   {% endfor %}
-</table></div>
+</div>
 {% endblock %}

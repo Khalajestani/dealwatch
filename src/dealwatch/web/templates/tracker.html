@@ -1,54 +1,52 @@
 {% extends "base.html" %}
 {% block title %}Tracker · Dealwatch{% endblock %}
 {% block content %}
-<h1>{{ icon('chart') }} Price tracker</h1>
-<div class="cards">
-  <div class="card"><span class="stat-icon">{{ icon('list') }}</span><div><div class="stat">{{ ov.items_tracked }}<span class="muted small">/{{ ov.items_total }}</span></div><div class="stat-label">items with price history</div></div></div>
-  <div class="card"><span class="stat-icon info">{{ icon('chart') }}</span><div><div class="stat">{{ ov.points }}</div><div class="stat-label">price points ({{ ov.observations }} offers, {{ ov.runs }} checks)</div></div></div>
-  <div class="card"><span class="stat-icon ok">{{ icon('percent') }}</span><div><div class="stat">{{ ov.at_low|length }}</div><div class="stat-label">items at their lowest price ever</div></div></div>
-  <div class="card"><span class="stat-icon">{{ icon('calendar') }}</span><div><div class="stat stat-sm">{{ ov.first_point_at|localtime(tz) if ov.first_point_at else '-' }}</div><div class="stat-label">tracking since</div></div></div>
+<h1>Price tracker</h1>
+<div class="kpis">
+  <div class="card"><div class="v">{{ ov.items_tracked }}<span class="muted small">/{{ ov.items_total }}</span></div><div class="l">items with price history</div></div>
+  <div class="card"><div class="v">{{ ov.points }}</div><div class="l">price points ({{ ov.observations }} offers, {{ ov.runs }} checks)</div></div>
+  <div class="card"><div class="v">{{ ov.at_low|length }}</div><div class="l">items at their lowest price</div></div>
+  <div class="card"><div class="v">{{ ov.first_point_at|friendly(tz, now, false) if ov.first_point_at else '-' }}</div><div class="l">tracking since</div></div>
 </div>
 
 {% if ov.movers_down or ov.movers_up or ov.at_low %}
 <div class="card">
-  {% if ov.at_low %}<p><strong>At lowest ever:</strong> {% for i in ov.at_low %}<a href="/items/{{ i.item.id }}">{{ i.item.display_name }}</a> ({{ i.last.best|money(settings.currency) }}{{ i.unit_label }}){% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
-  {% if ov.movers_down %}<p><strong>Cheaper than last check:</strong> {% for i in ov.movers_down %}<a href="/items/{{ i.item.id }}">{{ i.item.display_name }}</a> <span class="delta-down">▼ {{ i.change_vs_prev_pct|abs|round(0)|int }}%</span>{% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
-  {% if ov.movers_up %}<p><strong>More expensive than last check:</strong> {% for i in ov.movers_up %}<a href="/items/{{ i.item.id }}">{{ i.item.display_name }}</a> <span class="delta-up">▲ {{ i.change_vs_prev_pct|round(0)|int }}%</span>{% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
+  {% if ov.at_low %}<p class="flush"><strong>At their lowest:</strong> {% for i in ov.at_low %}<a href="/items/{{ i.item.id }}">{{ i.item.display_name }}</a> ({{ i.last.best|money(settings.currency) }}{{ i.unit_label }}){% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
+  {% if ov.movers_down %}<p><strong>Cheaper than the check before:</strong> {% for i in ov.movers_down %}<a href="/items/{{ i.item.id }}">{{ i.item.display_name }}</a> <span class="delta-down">▼ {{ i.change_vs_prev_pct|abs|round(0)|int }}%</span>{% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
+  {% if ov.movers_up %}<p><strong>Dearer than the check before:</strong> {% for i in ov.movers_up %}<a href="/items/{{ i.item.id }}">{{ i.item.display_name }}</a> <span class="delta-up">▲ {{ i.change_vs_prev_pct|round(0)|int }}%</span>{% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
 </div>
 {% endif %}
 
 {% if tracked %}
 <div class="table-wrap"><table>
-  <tr><th>Item</th><th>Last best</th><th>vs prev</th><th>30d avg</th><th>Lowest ever</th><th>Trend</th><th>Cheapest most often</th><th>Checks</th><th>Since</th></tr>
+  <tr><th>Item</th><th>Last best</th><th>vs before</th><th>30d avg</th><th>Lowest</th><th>Trend</th><th>Cheapest most often</th><th>Checks</th></tr>
   {% for i in tracked %}
   <tr>
-    <td><a href="/items/{{ i.item.id }}">{{ i.item.display_name }}</a>{% if i.at_all_time_low %} <span class="badge ok">lowest ever</span>{% endif %}</td>
+    <td><a href="/items/{{ i.item.id }}">{{ i.item.display_name }}</a>{% if i.at_all_time_low %} <span class="badge ok">lowest</span>{% endif %}</td>
     <td class="num">{{ i.last.best|money(settings.currency) }}<span class="muted small">{{ i.unit_label }}</span><div class="muted small">{{ i.last.domain }}</div></td>
-    <td class="num">{% if i.change_vs_prev_pct is none %}<span class="muted">first</span>{% elif i.change_vs_prev_pct < 0 %}<span class="delta-down">▼ {{ i.change_vs_prev_pct|abs|round(0)|int }}%</span>{% elif i.change_vs_prev_pct > 0 %}<span class="delta-up">▲ {{ i.change_vs_prev_pct|round(0)|int }}%</span>{% else %}=</span>{% endif %}</td>
+    <td class="num">{% if i.change_vs_prev_pct is none %}<span class="muted">first</span>{% elif i.change_vs_prev_pct < 0 %}<span class="delta-down">▼ {{ i.change_vs_prev_pct|abs|round(0)|int }}%</span>{% elif i.change_vs_prev_pct > 0 %}<span class="delta-up">▲ {{ i.change_vs_prev_pct|round(0)|int }}%</span>{% else %}={% endif %}</td>
     <td class="num">{{ i.avg_30d|money(settings.currency) if i.avg_30d is not none else '-' }}</td>
-    <td class="num">{{ i.low|money(settings.currency) }}<div class="muted small">{{ i.low_at|localtime(tz) }}</div></td>
+    <td class="num">{{ i.low|money(settings.currency) }}<div class="muted small">{{ i.low_at|friendly(tz, now, false) }}</div></td>
     <td>{{ sparks.get(i.item.id, '')|safe }} <span class="small muted">{{ i.trend }}</span></td>
     <td class="small">{{ i.best_domain or '-' }}{% if i.best_domain_share_pct %} ({{ i.best_domain_share_pct }}%){% endif %}</td>
     <td class="num">{{ i.n_points }}</td>
-    <td class="small">{{ i.first_seen|localtime(tz) }}</td>
   </tr>
   {% endfor %}
 </table></div>
 {% else %}
-<p class="muted">No price history yet. Every price check records one price point per item found (min, average, median and max, per pack and per unit, plus the best shop).</p>
+<div class="hint">{{ icon('chart') }}<span>No price history yet. Every price check records one price point per item it finds (lowest, average, median and highest, per pack and per unit, and the best shop).</span></div>
 {% endif %}
 {% if untracked %}<p class="small muted">Not tracked yet: {% for i in untracked %}<a href="/items/{{ i.item.id }}">{{ i.item.display_name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
 
 {% if ov.leaderboard %}
 <h2>{{ icon('store') }} Shops that were cheapest most often</h2>
-<div class="table-wrap"><table>
-  <tr><th>Shop</th><th>Checks won</th></tr>
-  {% for domain, wins in ov.leaderboard %}<tr><td>{{ domain }}</td><td class="num">{{ wins }}</td></tr>{% endfor %}
-</table></div>
+<div class="list">
+  {% for domain, wins in ov.leaderboard %}<div class="row"><div class="row-main">{{ domain }}</div><div class="row-end"><span class="price">{{ wins }}×</span></div></div>{% endfor %}
+</div>
 {% endif %}
 
 <div class="card small muted spaced">
-  <strong>Your data.</strong> Everything is in one SQLite file, <code>dealwatch.db</code>. Tables: <code>items</code>, <code>retailers</code>, <code>runs</code> (price checks), <code>run_items</code>, <code>observations</code> (every offer seen), <code>price_points</code> (one row per item per check: min/avg/median/max, per unit, best offer).
+  <strong>{{ icon('download', 'sm') }} Your data.</strong> Everything is in one SQLite file, <code>dealwatch.db</code>. Tables: <code>items</code>, <code>retailers</code>, <code>runs</code> (price checks), <code>run_items</code>, <code>observations</code> (every offer seen), <code>price_points</code> (one row per item per check: min/avg/median/max, per unit, best offer).
   CSV: <a href="/export/price_points.csv">price_points</a> · <a href="/export/observations.csv">observations</a> · <a href="/export/items.csv">items</a> · <a href="/export/runs.csv">runs</a>.
 </div>
 {% endblock %}

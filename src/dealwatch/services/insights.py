@@ -165,6 +165,18 @@ def all_item_insights(session: Session, now: datetime) -> list[ItemInsight]:
     return [item_insight(session, item, now, by_item.get(item.id, [])) for item in items]
 
 
+def price_drops(insights: list[ItemInsight], run_id: int, min_drop_pct: float = 5.0) -> list[ItemInsight]:
+    """Items whose price in the given check is a new all-time low or clearly below the check before, biggest first."""
+    drops = [
+        i
+        for i in insights
+        if i.last is not None
+        and i.last.run_id == run_id
+        and (i.is_new_low or (i.change_vs_prev_pct is not None and i.change_vs_prev_pct <= -min_drop_pct))
+    ]
+    return sorted(drops, key=lambda i: i.change_vs_prev_pct or 0.0)
+
+
 @dataclass
 class RetailerStat:
     domain: str

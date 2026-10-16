@@ -4,7 +4,8 @@ from conftest import FakeSearchClient
 from sqlalchemy import select
 
 from dealwatch.models import Item, Observation, PricePoint, Run
-from dealwatch.services.insights import item_insight, overview, retailer_breakdown
+from dealwatch.queries import current_deals
+from dealwatch.services.insights import all_item_insights, item_insight, overview, price_drops, retailer_breakdown
 from dealwatch.services.pricing import baseline_for_item
 from dealwatch.services.runner import execute_run
 from dealwatch.web.charts import Series, line_chart, nice_ticks, sparkline
@@ -119,6 +120,59 @@ def test_overview_movers_leaderboard_and_breakdown(session_factory):
         stats = retailer_breakdown(s, item.id, "unit")
         assert stats and stats == sorted(stats, key=lambda r: (r.min_price, -r.wins))
         assert all(r.n_offers >= 1 and r.last_seen for r in stats)
+
+
+def test_price_drops_are_the_last_checks_new_lows_and_clear_falls(session_factory):
+    with session_factory() as s:
+        names = ("Kitchen towels", "Toilet paper", "Toothpaste")
+        towels, paper, paste = (s.scalar(select(Item).where(Item.name == n)) for n in names)
+        _add_points(s, towels.id, [0.9, 0.7])  # a new low
+        _add_points(s, paper.id, [0.5, 0.6, 0.57])  # 5% under the check before, not a low
+        _add_points(s, paste.id, [0.5, 0.49])  # a new low by a hair still counts
+        insights = all_item_insights(s, NOW)
+    runs = {i.item.id: i.last.run_id for i in insights if i.last}
+    drops = price_drops(insights, runs[towels.id])
+    assert [i.item.id for i in drops] == [towels.id], "only items found in that check"
+    assert price_drops(insights, runs[paper.id])[0].item.id == paper.id
+    assert price_drops(insights, runs[paper.id], min_drop_pct=6) == []
+    assert price_drops(insights, runs[paste.id])[0].is_new_low
+
+
+def test_current_deals_are_each_items_latest_unless_ended(session_factory):
+    with session_factory() as s:
+        towels, paper, paste, shampoo = (
+            s.scalar(select(Item).where(Item.name == n))
+            for n in ("Kitchen towels", "Toilet paper", "Toothpaste", "Shampoo")
+        )
+        older, last = Run(status="success"), Run(status="success")
+        s.add_all([older, last])
+        s.flush()
+
+        def offer(item, run, deal, **extra):
+            s.add(
+                Observation(
+                    run_id=run.id,
+                    item_id=item.id,
+                    retailer_domain="ah.nl",
+                    title="x",
+                    url="u",
+                    price=1.0,
+                    is_deal=deal,
+                    **extra,
+                )
+            )
+
+        offer(towels, older, True, score=5)  # its latest check, though not the last one: still shown
+        offer(paper, older, True)
+        offer(paper, last, False)  # a newer check found no deal: gone
+        offer(paste, last, True, valid_until=NOW.date() - timedelta(days=1))  # the offer ended
+        offer(shampoo, last, True, score=9)
+        s.commit()
+        deals = current_deals(s, NOW.date())
+        assert [item.id for _, item in deals] == [shampoo.id, towels.id]
+        shampoo.active = False
+        s.commit()
+        assert [item.id for _, item in current_deals(s, NOW.date())] == [towels.id], "paused items are left out"
 
 
 def test_charts():

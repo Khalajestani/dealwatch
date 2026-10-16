@@ -37,6 +37,26 @@ def local_time(value: datetime | None, tz_name: str) -> str:
     return value.replace(tzinfo=ZoneInfo("UTC")).astimezone(tz).strftime("%a %d/%m/%Y %H:%M")
 
 
+def friendly_time(value: datetime | None, tz_name: str, now: datetime | None = None, clock: bool = True) -> str:
+    """'today 07:00', 'yesterday 07:00', 'tomorrow 07:00', 'Wed 14/10' within a week, else dd/mm/yyyy.
+
+    Takes naive UTC (the database) or an aware time (the scheduler); `clock=False` leaves out the time of day."""
+    if value is None:
+        return "-"
+    try:
+        tz = ZoneInfo(tz_name)
+    except Exception:  # unknown tz name in settings
+        tz = ZoneInfo("UTC")
+    utc = ZoneInfo("UTC")
+    local = (value if value.tzinfo else value.replace(tzinfo=utc)).astimezone(tz)
+    today = (now or datetime.now(utc).replace(tzinfo=None)).replace(tzinfo=utc).astimezone(tz).date()
+    days = (local.date() - today).days
+    named = {-1: "yesterday", 0: "today", 1: "tomorrow"}.get(days)
+    if named:
+        return f"{named} {local:%H:%M}" if clock else named
+    return f"{local:%a %d/%m}" if abs(days) < 7 else f"{local:%d/%m/%Y}"
+
+
 def local_date(value: datetime | None, tz_name: str) -> str | None:
     """dd/mm/yyyy in the app's time zone, or None."""
     return local_time(value, tz_name).split(" ")[1] if value else None

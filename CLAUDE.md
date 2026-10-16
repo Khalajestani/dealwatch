@@ -52,6 +52,8 @@ reported against each item's own price history. Runs on the Raspberry Pi beside 
 | What counts as a deal | `services/pricing.py` (`assess_offer`, `baseline_for_item`) |
 | A check from plan to report, domain filter, stopping on the limit | `services/runner.py` |
 | Smart entry | `services/extract.py`, `templates/item_new.html`, `item_review.html` |
+| Home: status line, deals, price drops, Watching | `dashboard` route, `queries.current_deals`, `insights.price_drops` |
+| The item form (add and edit) and the page parts | `_macros.html` (`item_form`, `tile`, `next_check`), `style.css` |
 | Ask | `services/ask.py`, `services/ask.md`, `templates/ask.html` |
 | Schedule and backups | `services/scheduler.py`, `backup.py` |
 | Recovering or reloading data (agents follow it) | `docs/recovery.md`, `backup.restore`, `make pi-backups`, `make pi-restore` |

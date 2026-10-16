@@ -36,28 +36,38 @@ app on the iPhone. Claude runs on your Claude plan: no API key, nothing billed p
    (default 10%) or a target hit; low-confidence offers are never called deals.
 4. **Track**: one price point per item per check, the series behind the Tracker, the charts and the exports.
 5. **Report**: deals first, a price tracker section (cheaper or dearer than last time, new lows), then checked
-   without a deal, not found and errors. The dashboard shows the latest deals.
+   without a deal, not found and errors. Home shows the current deals and the price drops.
 
 Details: [architecture](docs/architecture.md) · [decisions](docs/decisions.md) ·
 [requirements](docs/requirements.md) · [on the Pi](docs/raspberry-pi.md) · [Claude](docs/assistant.md) · [recovery](docs/recovery.md)
 
 ## Using it
 
+On a phone the tab bar at the bottom has Home, Items, Add, Ask and More (Tracker, Checks, Shops, Settings); on a
+wider screen the same pages are along the top.
+
+**Home**: one quiet line says when the last check ran and whether it went well (it turns red only when it failed),
+with Check now beside it. Under it the alerts: **Deals** (each item's deal from its latest check, the ones the last
+check found marked new, ended promotions left out) and **Price drops** (items the last check found at a new low or
+clearly cheaper than the check before). **Watching** lists what is being checked, the next to be checked first, with
+the last price, the shop and when each item is up again.
+
 **Add item**: "Say it or snap it": type or tap the mic and say what to watch ("Page toilet paper 24 rolls, buy
 under 30 cents a roll"), add a photo of the pack, or paste a product link. Claude fills in a review card: name,
 brand, category, priority, pack and unit, Dutch search hints, any target you named. Nothing is saved until you
-press Add item, and likely duplicates are pointed out. "Fill in the form" does the same by hand; only the name is
-required.
+press Add item, and likely duplicates are pointed out. "Type it in" is the same form by hand, and Edit on an item
+page shows it again; it asks only what the checks use (what to look for, how much you need it, when to tell you) and
+only the name is required.
 
 **Ask**: by text or voice, optionally with a photo. "What are the best deals right now?", "Is the coffee cheaper than
 usual?", "I bought toilet paper today", "Watch Dreft dishwasher tablets, I need them soon". It can read an item's
 history, add, change, and mark items bought, paused, resumed or due for the next check. It cannot delete.
 
-**Items**: filters by text, category, priority and status (due, waiting, snoozed, paused, has a deal, no price yet).
+**Items**: search, a category and status chips with counts (deals, next check, waiting, no price yet, snoozed, paused).
 Each item page has its price tracker, chart, per-shop breakdown and every offer seen. Actions: Bought it (snoozes for
-30 days), Check in the next price check, Pause, Delete.
+30 days), Check next time, Pause, Edit; Delete is on the Edit page.
 
-**Retailers**: each shop is enabled (searched), disabled (temporarily off) or blocked (never used; offers from it
+**Shops**: each shop is enabled (searched), disabled (temporarily off) or blocked (never used; offers from it
 are dropped). Category tags limit a shop to the batches where it makes sense. Settings, Search mode switches between
 enabled shops only (default) and the open web minus blocked shops.
 
@@ -70,7 +80,7 @@ locale, schedule. Everything has inline help.
 ## Your data
 
 Everything is in one SQLite file, `data/dealwatch.db`, backed up every night with the item photos (newest 30 kept, `make pi-backups`
-copies them to the Mac, `make pi-restore` puts one back; [docs/recovery.md](docs/recovery.md) when data is lost or wrong). CSV exports are linked in the footer: `/export/price_points.csv`, `observations`,
+copies them to the Mac, `make pi-restore` puts one back; [docs/recovery.md](docs/recovery.md) when data is lost or wrong). CSV exports are linked on the Tracker page: `/export/price_points.csv`, `observations`,
 `items`, `runs`, and `/items/{id}/price_points.csv`.
 
 | Table | One row per | Notes |

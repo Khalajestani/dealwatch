@@ -2,10 +2,22 @@
 
 from __future__ import annotations
 
-from sqlalchemy import func, select
+from datetime import date
+
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from .models import Item, Observation, Run
+
+
+def _latest_check_per_item(item_ids: list[int]):
+    """Each item's most recent check that found it, as (item_id, run_id)."""
+    return (
+        select(Observation.item_id, func.max(Observation.run_id).label("run_id"))
+        .where(Observation.item_id.in_(item_ids))
+        .group_by(Observation.item_id)
+        .subquery()
+    )
 
 
 def latest_best_offers(session: Session, item_ids: list[int]) -> dict[int, Observation]:
@@ -13,15 +25,10 @@ def latest_best_offers(session: Session, item_ids: list[int]) -> dict[int, Obser
     best: dict[int, Observation] = {}
     if not item_ids:
         return best
-    latest_run = (
-        select(Observation.item_id, func.max(Observation.run_id).label("run_id"))
-        .where(Observation.item_id.in_(item_ids))
-        .group_by(Observation.item_id)
-        .subquery()
-    )
+    latest = _latest_check_per_item(item_ids)
     rows = session.scalars(
         select(Observation).join(
-            latest_run, (Observation.item_id == latest_run.c.item_id) & (Observation.run_id == latest_run.c.run_id)
+            latest, (Observation.item_id == latest.c.item_id) & (Observation.run_id == latest.c.run_id)
         )
     )
     for obs in rows:
@@ -35,14 +42,23 @@ def last_complete_run(session: Session) -> Run | None:
     return session.scalars(select(Run).where(Run.status.in_(["success", "partial"])).order_by(Run.id.desc())).first()
 
 
-def deals_of(session: Session, run: Run | None) -> list[tuple[Observation, Item]]:
-    """The best deal per item in a check, highest score first."""
-    if run is None:
+def current_deals(session: Session, today: date) -> list[tuple[Observation, Item]]:
+    """The best deal of each active item from its most recent check, unless the offer has ended; best first.
+
+    A daily check only looks at the items that are due, so the last check alone would hide the deals the checks
+    before it found for the other items."""
+    item_ids = list(session.scalars(select(Item.id).where(Item.active.is_(True))))
+    if not item_ids:
         return []
+    latest = _latest_check_per_item(item_ids)
     rows = session.execute(
         select(Observation, Item)
         .join(Item, Item.id == Observation.item_id)
-        .where(Observation.run_id == run.id, Observation.is_deal.is_(True))
+        .join(latest, (Observation.item_id == latest.c.item_id) & (Observation.run_id == latest.c.run_id))
+        .where(
+            Observation.is_deal.is_(True),
+            or_(Observation.valid_until.is_(None), Observation.valid_until >= today),
+        )
         .order_by(Observation.score.desc())
     ).all()
     seen: set[int] = set()

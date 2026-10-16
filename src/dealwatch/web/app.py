@@ -14,10 +14,11 @@ import logging
 import re
 import threading
 import uuid
+from collections import Counter
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 from fastapi import FastAPI, Form, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
@@ -51,13 +52,13 @@ from ..models import (
     RunItem,
     utcnow,
 )
-from ..queries import deals_of, last_complete_run, latest_best_offers
+from ..queries import current_deals, last_complete_run, latest_best_offers
 from ..seed import seed_retailers, seed_sample_items
 from ..services import ask, extract
 from ..services.claude import Claude, Unavailable
-from ..services.insights import all_item_insights, item_insight, overview, retailer_breakdown
-from ..services.planner import is_due
-from ..services.report import local_time, money
+from ..services.insights import all_item_insights, item_insight, overview, price_drops, retailer_breakdown
+from ..services.planner import due_at, is_due
+from ..services.report import friendly_time, local_time, money
 from ..services.runner import RunInProgress, execute_run, is_run_active
 from ..services.scheduler import RunScheduler
 from ..services.search import ClaudeSearchClient, SearchClient
@@ -79,6 +80,35 @@ _EXPORTS = {
     "run_items": RunItem,
 }
 _EXPORT_SKIP = {"runs": {"plan_json", "log_json"}}
+
+
+# The status chips on Items, in order ("" shows everything).
+ITEM_STATUSES = [
+    ("", "All"),
+    ("deal", "Deals"),
+    ("due", "Next check"),
+    ("waiting", "Waiting"),
+    ("untracked", "No price yet"),
+    ("snoozed", "Snoozed"),
+    ("paused", "Paused"),
+]
+
+
+def _item_tags(item: Item, offer: Observation | None, due: bool, now) -> set[str]:
+    """The ITEM_STATUSES an item is in."""
+    snoozed = bool(item.snooze_until and item.snooze_until > now)
+    return {
+        tag
+        for tag, applies in (
+            ("deal", bool(offer and offer.is_deal)),
+            ("due", due),
+            ("waiting", item.active and not snoozed and not due),
+            ("untracked", offer is None),
+            ("snoozed", snoozed),
+            ("paused", not item.active),
+        )
+        if applies
+    }
 
 
 def create_app(
@@ -141,12 +171,14 @@ def create_app(
     templates = Jinja2Templates(directory=BASE_DIR / "templates")
     templates.env.filters["money"] = money
     templates.env.filters["localtime"] = local_time
+    templates.env.filters["friendly"] = friendly_time
     templates.env.filters["pct"] = lambda v: "-" if v is None else f"{v:+.0f}%"
     templates.env.globals.update(
         categories=CATEGORIES,
         category_short=CATEGORY_SHORT,
         category_icon=CATEGORY_ICON,
         priorities=PRIORITIES,
+        priority_short={"need": "need it", "stock_up": "stock up", "wishlist": "wishlist"},
         units=UNITS,
         statuses=RETAILER_STATUSES,
         icon=icon,
@@ -164,8 +196,9 @@ def create_app(
             settings=settings,
             tz=settings.timezone,
             run_active=is_run_active(),
+            now=context.pop("now", None) or utcnow(),
             msg=request.query_params.get("msg"),
-            err=request.query_params.get("err"),
+            err=context.pop("err", None) or request.query_params.get("err"),
             claude_ready=claude.enabled or search_client is not None,
         )
         return templates.TemplateResponse(request, template, context, status_code=status_code)
@@ -249,83 +282,103 @@ def create_app(
             now = utcnow()
             items = list(session.scalars(select(Item)))
             active = [i for i in items if i.active]
-            due = [i for i in active if is_due(i, now, settings)]
+            best = latest_best_offers(session, [i.id for i in active])
             enabled_retailers = (
                 session.scalar(select(func.count()).select_from(Retailer).where(Retailer.status == "enabled")) or 0
             )
             last_run = session.scalars(select(Run).order_by(Run.id.desc())).first()
             last_complete = last_complete_run(session)
-            deals = deals_of(session, last_complete)
+            # The last check's own finds first.
+            deals = sorted(
+                current_deals(session, now.date()), key=lambda d: d[0].run_id != getattr(last_complete, "id", None)
+            )
+            deal_ids = {item.id for _, item in deals}
+            drops = (
+                [i for i in price_drops(all_item_insights(session, now), last_complete.id) if i.item.id not in deal_ids]
+                if last_complete
+                else []
+            )
+        # What is being checked: the next to be checked first.
+        watching = sorted(
+            (
+                {"item": i, "offer": best.get(i.id), "due": is_due(i, now, settings), "due_at": due_at(i, settings)}
+                for i in active
+            ),
+            key=lambda w: (not w["due"], w["due_at"] or now, w["item"].name.lower()),
+        )
         return render(
             request,
             "dashboard.html",
             settings=settings,
             nav="dashboard",
+            now=now,
             active_count=len(active),
-            due_count=len(due),
+            due_count=sum(w["due"] for w in watching),
             item_count=len(items),
             enabled_retailers=enabled_retailers,
             last_run=last_run,
             last_complete=last_complete,
             deals=deals,
+            drops=drops,
+            watching=watching,
             next_run=scheduler.next_run_time(),
         )
 
     # ---- items ------------------------------------------------------------------------------
 
     @app.get("/items", response_class=HTMLResponse)
-    def items_page(request: Request, q: str = "", category: str = "", priority: str = "", status: str = ""):
+    def items_page(request: Request, q: str = "", category: str = "", status: str = ""):
         with session_factory() as session:
             settings = get_settings(session)
             now = utcnow()
             all_items = list(session.scalars(select(Item).order_by(Item.active.desc(), Item.category, Item.name)))
             best = latest_best_offers(session, [i.id for i in all_items])
-            due_ids = {i.id for i in all_items if is_due(i, now, settings)}
+        due_ids = {i.id for i in all_items if is_due(i, now, settings)}
         needle = normalize(q)
-        shown = []
-        for item in all_items:
-            offer = best.get(item.id)
-            snoozed = bool(item.snooze_until and item.snooze_until > now)
-            if (
-                (category and item.category != category)
-                or (priority and item.priority != priority)
-                or (
-                    needle
-                    and needle
-                    not in normalize(
-                        " ".join(filter(None, [item.display_name, item.search_hints, item.notes, item.category]))
-                    )
-                )
-                or (status == "due" and item.id not in due_ids)
-                or (status == "waiting" and not (item.active and not snoozed and item.id not in due_ids))
-                or (status == "snoozed" and not snoozed)
-                or (status == "paused" and item.active)
-                or (status == "deal" and not (offer and offer.is_deal))
-                or (status == "untracked" and offer is not None)
-            ):
-                continue
-            shown.append(item)
-        filters = {
-            "q": q,
-            "category": category,
-            "priority": priority,
-            "status": status,
-            "any": bool(q or category or priority or status),
-        }
+        searched = [
+            item
+            for item in all_items
+            if (not category or item.category == category)
+            and (
+                not needle
+                or needle
+                in normalize(" ".join(filter(None, [item.display_name, item.search_hints, item.notes, item.category])))
+            )
+        ]
+        tags = {item.id: _item_tags(item, best.get(item.id), item.id in due_ids, now) for item in searched}
+        counts = Counter(tag for item_tags in tags.values() for tag in item_tags)
+        status_links = [
+            (
+                key,
+                label,
+                "/items?" + urlencode({k: v for k, v in (("q", q), ("category", category), ("status", key)) if v}),
+                counts[key],
+            )
+            for key, label in ITEM_STATUSES
+            if not key or counts[key] or key == status
+        ]
         return render(
             request,
             "items.html",
             settings=settings,
             nav="items",
-            items=shown,
+            now=now,
+            items=[item for item in searched if not status or status in tags[item.id]],
             total=len(all_items),
             best=best,
             due_ids=due_ids,
-            due_count=len(due_ids),
-            filters=filters,
+            due_ats={item.id: due_at(item, settings) for item in all_items},
+            filters={"q": q, "category": category, "status": status},
+            status_links=status_links,
         )
 
-    # ---- adding items: smart entry or the form -> review card -> create ----------------------
+    # ---- adding items: the form, or the smart entry and its review card -------------------
+
+    def item_values(form) -> dict:
+        """What a submitted item form holds, to show it again with an error."""
+        return {key: form.get(key) for key in (*item_store.FIELDS, "id", "image_path")} | {
+            "bulk_ok": bool(form.get("bulk_ok"))
+        }
 
     @app.get("/items/new", response_class=HTMLResponse)
     def item_new(request: Request, mode: str = ""):
@@ -336,38 +389,27 @@ def create_app(
     @app.post("/items/review", response_class=HTMLResponse)
     async def item_review(request: Request):
         form = await request.form()
-        mode = form.get("mode") or "manual"
-        extracted, image_path = None, None
-        if mode == "manual":
-            draft = {k: form.get(k) for k in item_store.FIELDS} | {"bulk_ok": bool(form.get("bulk_ok"))}
-            if not (draft.get("name") or "").strip():
-                return redirect("/items/new?mode=manual", err="A name is required.")
-        elif mode == "smart":
-            if not claude.enabled:
-                return redirect("/items/new?mode=manual", err=NOT_CONNECTED)
-            text = str(form.get("text") or "").strip()[:2000]
-            try:
-                photo = await read_photo(form)
-            except ValueError as exc:
-                return redirect("/items/new?mode=smart", err=str(exc))
-            if not text and not photo:
-                return redirect("/items/new?mode=smart", err="Say or type what to watch, add a photo, or both.")
-            try:
-                extracted, link = await run_in_threadpool(extract.draft, claude, text, photo)
-            except Unavailable as exc:
-                return redirect("/items/new?mode=smart", err=str(exc))
-            draft = extracted.to_draft(reference_url=link)
-            if photo:
-                image_path = save_upload(photo)
-        else:
-            raise HTTPException(400, "unknown mode")
+        if not claude.enabled:
+            return redirect("/items/new?mode=manual", err=NOT_CONNECTED)
+        text = str(form.get("text") or "").strip()[:2000]
+        try:
+            photo = await read_photo(form)
+        except ValueError as exc:
+            return redirect("/items/new?mode=smart", err=str(exc))
+        if not text and not photo:
+            return redirect("/items/new?mode=smart", err="Say or type what to watch, add a photo, or both.")
+        try:
+            extracted, link = await run_in_threadpool(extract.draft, claude, text, photo)
+        except Unavailable as exc:
+            return redirect("/items/new?mode=smart", err=str(exc))
+        draft = extracted.to_draft(reference_url=link)
+        image_path = save_upload(photo) if photo else None
         with session_factory() as session:
             similar = find_similar(draft.get("name") or "", draft.get("brand"), list(session.scalars(select(Item))))
         return render(
             request,
             "item_review.html",
             nav="items",
-            mode=mode,
             draft=draft,
             extracted=extracted,
             image_path=image_path,
@@ -403,10 +445,13 @@ def create_app(
         try:
             data = item_store.from_form(form)
         except ValueError as exc:
-            return redirect("/items/new?mode=manual", err=str(exc))
+            values = item_values(form) | {"image_path": upload_name(form.get("image_path"))}
+            return render(request, "item_new.html", 400, nav="items", mode="manual", prefill=values, err=str(exc))
         with session_factory() as session:
             item = item_store.create_item(session, data, upload_name(form.get("image_path")))
         return redirect(f"/items/{item.id}", msg=f"Added {item.display_name}. It is checked in the next price check.")
+
+    # ---- one item: its page, editing, the quick actions ------------------------------------
 
     @app.get("/items/{item_id}", response_class=HTMLResponse)
     def item_detail(request: Request, item_id: int):
@@ -441,7 +486,7 @@ def create_app(
                         Series("Average of offers", [(p.at, p.avg) for p in insight.points]),
                     ],
                     chart_id=f"item-{item_id}",
-                    title=f"Price per check{insight.unit_label} - {item.display_name}",
+                    title="Price per check" + (f", per {item.unit or 'unit'}" if insight.basis == "unit" else ""),
                     unit_suffix=insight.unit_label,
                 )
                 if insight.points
@@ -452,15 +497,26 @@ def create_app(
             "item_detail.html",
             settings=settings,
             nav="items",
+            now=now,
             item=item,
             history=history,
             checks=checks,
             due=is_due(item, now, settings),
+            due_at=due_at(item, settings),
             insight=insight,
             points=points,
             breakdown=breakdown,
             chart_html=chart_html,
         )
+
+    @app.get("/items/{item_id}/edit", response_class=HTMLResponse)
+    def item_edit(request: Request, item_id: int):
+        with session_factory() as session:
+            item = session.get(Item, item_id)
+            if item is None:
+                raise HTTPException(404)
+        values = {key: getattr(item, key) for key in item_store.FIELDS} | {"id": item.id}
+        return render(request, "item_edit.html", nav="items", item=item, values=values)
 
     @app.post("/items/{item_id}")
     async def update_item(request: Request, item_id: int):
@@ -472,7 +528,8 @@ def create_app(
             try:
                 item_store.change_item(session, item, item_store.from_form(form).model_dump())
             except ValueError as exc:
-                return redirect(f"/items/{item_id}", err=str(exc))
+                values = item_values(form) | {"id": item_id, "image_path": None}
+                return render(request, "item_edit.html", 400, nav="items", item=item, values=values, err=str(exc))
         return redirect(f"/items/{item_id}", msg="Saved.")
 
     @app.post("/items/{item_id}/action")
@@ -601,12 +658,13 @@ def create_app(
         return render(request, "runs.html", nav="runs", runs=runs)
 
     @app.post("/runs/start")
-    def start_run(force: Annotated[str | None, Form()] = None):
+    def start_run(force: Annotated[str | None, Form()] = None, next: Annotated[str, Form()] = "/runs"):
+        back = security.safe_next(next, "/runs")
         client = client_factory()
         if client is None:
-            return redirect("/runs", err=NOT_CONNECTED)
+            return redirect(back, err=NOT_CONNECTED)
         if is_run_active():
-            return redirect("/runs", err="A price check is already in progress.")
+            return redirect(back, err="A price check is already in progress.")
 
         def worker() -> None:
             try:
@@ -617,7 +675,7 @@ def create_app(
                 log.exception("manual price check failed")
 
         threading.Thread(target=worker, name="dealwatch-check", daemon=True).start()
-        return redirect("/runs", msg="Price check started. It takes a few minutes; refresh this page to follow it.")
+        return redirect(back, msg="Price check started. It takes a few minutes.")
 
     @app.get("/runs/{run_id}", response_class=HTMLResponse)
     def run_detail(request: Request, run_id: int):

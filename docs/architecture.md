@@ -76,7 +76,12 @@ overview. `web/charts.py` renders inline SVG; `static/tracker.js` adds the hover
 ## Web (`web/app.py`, `security.py`)
 
 Server-rendered Jinja pages, plain forms, a few enhancements in `static/app.js` (confirm prompts, busy state, the
-mic, the remembered model picker, live similar items, the service worker). The content security policy allows
+mic, the remembered model picker, live similar items, the More menu, the service worker). `style.css` holds the
+colour tokens for both themes and the parts every page is made of: list rows with a category tile, cards, badges,
+the segmented switch, the phone tab bar. `_macros.html` has the one item form (`item_form`, for adding and editing)
+and the shared bits (`tile`, `next_check`). Home reads `queries.current_deals` (Ask's latest_deals does too),
+`insights.price_drops` for the last check and `planner.due_at` for when each item is up again; times show as
+"today 07:00" through `report.friendly_time`. A page with a check running refreshes itself every 20 seconds. The content security policy allows
 scripts from the app only, so there are no inline handlers. `security.install` adds the login, the same-origin check
 for state-changing requests and the headers.
 
