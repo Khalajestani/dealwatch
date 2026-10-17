@@ -1,5 +1,5 @@
 """The one write path for items, shared by the forms and Ask: what an item may hold, adding, changing and the
-quick actions (bought, pause, check in the next run). Deleting stays in the UI."""
+quick actions (bought, already bought, pause, check in the next run). Deleting stays in the UI."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ FIELDS = (
     "reference_url",
     "notes",
 )
-Action = Literal["bought", "pause", "resume", "unsnooze", "check_next"]
+Action = Literal["bought", "already_bought", "undo_bought", "pause", "resume", "unsnooze", "check_next"]
 
 
 class ItemIn(BaseModel):
@@ -156,6 +156,12 @@ def apply_action(session: Session, item: Item, action: Action, settings: Setting
         item.last_bought_at = now
         item.snooze_until = now + timedelta(days=settings.bought_snooze_days)
         msg = f"Marked as bought, skipped for {settings.bought_snooze_days} days."
+    elif action == "already_bought":
+        item.status, item.bought_at, item.last_bought_at = "bought", now, now
+        msg = "Moved to Purchased: no more checks or deals for it."
+    elif action == "undo_bought":
+        item.status, item.bought_at = "active", None
+        msg = "Back on the list."
     elif action == "pause":
         item.active = False
         msg = "Paused: no more checks until it is resumed."

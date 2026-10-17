@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import tile, next_check with context %}
+{% from "_macros.html" import tile, next_check, bought_button with context %}
 {% block head %}{% if run_active %}<meta http-equiv="refresh" content="20">{% endif %}{% endblock %}
 {% block content %}
 <h1 class="sr-only">Home</h1>
@@ -64,6 +64,7 @@
         {% if obs.list_price and obs.list_price > obs.price %}<span class="was">{{ obs.list_price|money(obs.currency) }}</span>{% endif %}
         {% if obs.unit_price is not none %}<span class="per">{{ obs.unit_price|money(obs.currency) }}/{{ obs.unit }}</span>{% endif %}
       </div>
+      {{ bought_button(item, '/') }}
       <a class="btn primary small" href="{{ obs.url }}" target="_blank" rel="noopener">Open {{ icon('external', 'sm') }}</a>
     </div>
     {% set why = (obs.reasons or '').split('; ')[0] %}
@@ -77,17 +78,18 @@
 <div class="section-head"><h2>{{ icon('trending-down') }} Price drops</h2><a href="/tracker">Tracker</a></div>
 <div class="list">
   {% for i in drops %}
-  <a class="row" href="/items/{{ i.item.id }}">
+  <div class="row linked">
     {{ tile(i.item) }}
     <div class="row-main">
-      <div class="row-title">{{ i.item.display_name }}</div>
+      <a class="row-title row-link" href="/items/{{ i.item.id }}">{{ i.item.display_name }}</a>
       <div class="row-sub">{{ i.last.domain }}{% if i.is_new_low %} · lowest price so far{% endif %}</div>
     </div>
     <div class="row-end">
       <span class="price">{{ i.last.best|money(settings.currency) }}<span class="muted small">{{ i.unit_label }}</span></span>
       {% if i.change_vs_prev_pct is not none and i.change_vs_prev_pct < 0 %}<span class="drop small">▼ {{ i.change_vs_prev_pct|abs|round|int }}%</span>{% endif %}
     </div>
-  </a>
+    {{ bought_button(i.item, '/') }}
+  </div>
   {% endfor %}
 </div>
 {% endif %}
@@ -104,17 +106,18 @@
 <div class="list">
   {% for w in watching[:8] %}
   {% set item, offer = w.item, w.offer %}
-  <a class="row" href="/items/{{ item.id }}">
+  <div class="row linked">
     {{ tile(item) }}
     <div class="row-main">
-      <div class="row-title">{{ item.display_name }}</div>
+      <a class="row-title row-link" href="/items/{{ item.id }}">{{ item.display_name }}</a>
       <div class="row-sub">{% if offer %}{{ offer.retailer_domain }} · {% endif %}{% if item.last_checked_at %}checked {{ item.last_checked_at|friendly(tz, now, false) }}{% else %}not checked yet{% endif %}</div>
     </div>
     <div class="row-end">
       {% if offer %}<span class="price">{% if offer.is_deal %}<span class="flame" title="A deal">{{ icon('flame', 'sm') }}</span> {% endif %}{{ offer.price|money(offer.currency) }}</span>{% else %}<span class="faint small">no price yet</span>{% endif %}
       {{ next_check(item, w.due, w.due_at, now) }}
     </div>
-  </a>
+    {{ bought_button(item, '/') }}
+  </div>
   {% endfor %}
   {% if watching|length > 8 %}<a class="row" href="/items"><div class="row-main muted">{{ watching|length - 8 }} more</div>{{ icon('chevron', 'sm') }}</a>{% endif %}
 </div>

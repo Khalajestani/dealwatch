@@ -1,5 +1,6 @@
-"""The two jobs inside the web process: the price check on the cron from Settings (daily at 07:00 by default)
-and the nightly backup at 03:00, both in the time zone from Settings."""
+"""The two jobs inside the web process: the daily price check at the start time from Settings (02:30 by default)
+and the nightly backup at 03:00, both in the time zone from Settings. The check is the only scheduled step that
+reaches Claude; Ask, the smart entry and Check now run only when used."""
 
 from __future__ import annotations
 
@@ -13,14 +14,20 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from .. import backup
 from ..config import Env
-from ..settings import get_settings
+from ..settings import Settings, get_settings
 from .runner import RunInProgress, execute_run
 from .search import SearchClient
 
 log = logging.getLogger(__name__)
 CHECK_JOB = "price-check"
 BACKUP_JOB = "nightly-backup"
-BACKUP_HOUR = 3  # before the Pi's own updates and reboot at 04:30, long before the check at 07:00
+BACKUP_HOUR = 3  # after the 02:30 check has usually finished, before the Pi's own updates and reboot at 04:30
+
+
+def check_trigger(settings: Settings) -> CronTrigger:
+    """Every day at the start time, on the local clock of the Settings time zone (so summer and winter time alike)."""
+    hour, minute = map(int, settings.schedule_time.split(":"))
+    return CronTrigger(hour=hour, minute=minute, timezone=settings.timezone)
 
 
 class RunScheduler:
@@ -58,15 +65,18 @@ class RunScheduler:
             log.info("daily price check is off")
             return
         try:
-            trigger = CronTrigger.from_crontab(settings.schedule_cron, timezone=settings.timezone)
+            trigger = check_trigger(settings)
         except (ValueError, TypeError) as exc:
-            log.error("invalid schedule '%s': %s", settings.schedule_cron, exc)
+            log.error("invalid start time '%s': %s", settings.schedule_time, exc)
             return
-        # misfire_grace_time: a check missed while the Pi rebooted still runs when it is back within the hour.
+        # misfire_grace_time: a check missed while the app was down (a deploy, a power cut) runs when it is back within
+        # the hour.
         self._scheduler.add_job(
             self._check, trigger, id=CHECK_JOB, replace_existing=True, coalesce=True, misfire_grace_time=3600
         )
-        log.info("price check: %s (%s), next at %s", settings.schedule_cron, settings.timezone, self.next_run_time())
+        log.info(
+            "price check: daily at %s (%s), next at %s", settings.schedule_time, settings.timezone, self.next_run_time()
+        )
 
     def next_run_time(self) -> datetime | None:
         job = self._scheduler.get_job(CHECK_JOB) if self._scheduler.running else None

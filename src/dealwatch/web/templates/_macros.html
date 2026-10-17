@@ -13,11 +13,23 @@
 {%- endmacro %}
 
 {% macro next_check(item, due, at, now) -%}
-{# When the item is looked at next: in the next check, in some days, or not (paused, snoozed after buying). #}
-{% if not item.active %}<span class="badge">{{ icon('pause', 'sm') }} paused</span>
+{# When the item is looked at next: in the next check, in some days, or not (bought, paused, snoozed after buying). #}
+{% if item.status == 'bought' %}<span class="badge ok">{{ icon('check', 'sm') }} bought {{ item.bought_at|localdate(tz) }}</span>
+{%- elif not item.active %}<span class="badge">{{ icon('pause', 'sm') }} paused</span>
 {%- elif item.snooze_until and item.snooze_until > now %}<span class="badge snoozed">{{ icon('clock', 'sm') }} snoozed</span>
 {%- elif due %}<span class="badge due">{{ icon('refresh', 'sm') }} next check</span>
 {%- else %}{% set days = ((at - now).total_seconds() / 86400)|round(0, 'ceil')|int %}<span class="badge">{{ icon('clock', 'sm') }} {{ 'tomorrow' if days <= 1 else 'in %d days'|format(days) }}</span>{% endif %}
+{%- endmacro %}
+
+{% macro bought_button(item, back) -%}
+{# One click from a list: a refill is skipped for a while, anything else moves to Purchased for good (the item page
+   has both). On a phone only the tick shows, to leave room for the name. #}
+{% set label = 'Bought it' if item.is_refill else 'Already bought' %}
+<form method="post" action="/items/{{ item.id }}/action" class="row-action">
+  <input type="hidden" name="action" value="{{ 'bought' if item.is_refill else 'already_bought' }}">
+  <input type="hidden" name="next" value="{{ back }}">
+  <button type="submit" class="ok small" aria-label="{{ label }}: {{ item.display_name }}" title="{{ 'Skips it for %d days'|format(settings.bought_snooze_days) if item.is_refill else 'Moves it to Purchased: no more checks or deals' }}">{{ icon('check', 'sm') }}<span class="hide-mobile">{{ label }}</span></button>
+</form>
 {%- endmacro %}
 
 {% macro money_input(name, value, placeholder, label_id) -%}

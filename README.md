@@ -61,17 +61,22 @@ only the name is required.
 
 **Ask**: by text or voice, optionally with a photo. "What are the best deals right now?", "Is the coffee cheaper than
 usual?", "I bought toilet paper today", "Watch Dreft dishwasher tablets, I need them soon". It can read an item's
-history, add, change, and mark items bought, paused, resumed or due for the next check. It cannot delete.
+history, add, change, and mark items bought (a refill), already bought (a one-off), paused, resumed or due for the
+next check. It cannot delete.
 
 **Items**: search, a category and status chips with counts (deals, next check, waiting, no price yet, snoozed, paused).
-Each item page has its price tracker, chart, per-shop breakdown and every offer seen. Actions: Bought it (snoozes for
-30 days), Check next time, Pause, Edit; Delete is on the Edit page.
+Each item page has its price tracker, chart, per-shop breakdown and every offer seen. Actions: Bought it (a refill:
+skipped for 60 days), Already bought (a one-off: moved to Purchased for good), Check next time, Pause, Edit; Delete is
+on the Edit page. The lists on Home and Items have a one-click tick per item: Bought it for household, personal care,
+groceries, health and pets & baby items, Already bought for the rest. **Purchased**, folded away under the list, keeps
+what was bought for good with the date and its history; Undo puts an item back. Bought items are not checked and
+leave the deals, price drops, the Tracker and new reports.
 
 **Shops**: each shop is enabled (searched), disabled (temporarily off) or blocked (never used; offers from it
 are dropped). Category tags limit a shop to the batches where it makes sense. Settings, Search mode switches between
 enabled shops only (default) and the open web minus blocked shops.
 
-**Checks**: the daily check at 07:00, or Check prices now. Each check shows the report, every offer, what Claude
+**Checks**: the daily check at 02:30, or Check prices now. Each check shows the report, every offer, what Claude
 searched and read, dropped offers and errors.
 
 **Settings**: model and effort, search mode, batch size and caps, deal threshold, baseline window, check intervals,

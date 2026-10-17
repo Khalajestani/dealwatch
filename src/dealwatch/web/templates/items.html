@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import tile, next_check with context %}
+{% from "_macros.html" import tile, next_check, bought_button with context %}
 {% block title %}Items · Dealwatch{% endblock %}
 {% block content %}
 <div class="page-head">
@@ -22,17 +22,18 @@
 <div class="list">
   {% for item in items %}
   {% set b = best.get(item.id) %}
-  <a class="row {{ '' if item.active else 'inactive' }}" href="/items/{{ item.id }}">
+  <div class="row linked {{ '' if item.active else 'inactive' }}">
     {{ tile(item) }}
     <div class="row-main">
-      <div class="row-title">{{ item.display_name }}</div>
+      <a class="row-title row-link" href="/items/{{ item.id }}">{{ item.display_name }}</a>
       <div class="row-sub">{% if b %}{{ b.retailer_domain }} · {% endif %}{% if item.last_checked_at %}checked {{ item.last_checked_at|friendly(tz, now, false) }}{% else %}not checked yet{% endif %}</div>
     </div>
     <div class="row-end">
       {% if b %}<span class="price">{% if b.is_deal %}<span class="flame" title="A deal">{{ icon('flame', 'sm') }}</span> {% endif %}{{ b.price|money(b.currency) }}</span>{% else %}<span class="faint small">no price yet</span>{% endif %}
       {{ next_check(item, item.id in due_ids, due_ats.get(item.id), now) }}
     </div>
-  </a>
+    {{ bought_button(item, here) }}
+  </div>
   {% endfor %}
 </div>
 {% elif total %}
@@ -43,5 +44,27 @@
   <p>Your list is empty. <a href="/items/new">Add your first item</a> by saying it, snapping the pack or typing it in.</p>
   <form method="post" action="/seed-samples" class="spaced"><button class="small" type="submit">{{ icon('sparkles', 'sm') }} Try sample items</button></form>
 </div>
+{% endif %}
+
+{# Bought for good: kept with their history, no longer checked or reported. #}
+{% if purchased %}
+<details class="more-block">
+  <summary>Purchased <span class="faint">{{ purchased|length }}</span></summary>
+  <div class="list">
+    {% for item in purchased %}
+    <div class="row linked">
+      {{ tile(item) }}
+      <div class="row-main">
+        <a class="row-title row-link" href="/items/{{ item.id }}">{{ item.display_name }}</a>
+        <div class="row-sub">bought {{ item.bought_at|localdate(tz) }}</div>
+      </div>
+      <form method="post" action="/items/{{ item.id }}/action" class="row-action">
+        <input type="hidden" name="action" value="undo_bought"><input type="hidden" name="next" value="{{ here }}">
+        <button type="submit" class="small" aria-label="Undo: {{ item.display_name }}">{{ icon('refresh', 'sm') }} Undo</button>
+      </form>
+    </div>
+    {% endfor %}
+  </div>
+</details>
 {% endif %}
 {% endblock %}

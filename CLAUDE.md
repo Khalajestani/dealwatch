@@ -55,7 +55,8 @@ reported against each item's own price history. Runs on the Raspberry Pi beside 
 | Home: status line, deals, price drops, Watching | `dashboard` route, `queries.current_deals`, `insights.price_drops` |
 | The item form (add and edit) and the page parts | `_macros.html` (`item_form`, `tile`, `next_check`), `style.css` |
 | Ask | `services/ask.py`, `services/ask.md`, `templates/ask.html` |
-| Schedule and backups | `services/scheduler.py`, `backup.py` |
+| Schedule (start time 02:30) and backups | `services/scheduler.py` (`check_trigger`), `backup.py` |
+| Bought for now (snooze) and for good (Purchased) | `items.apply_action`, `Item.watched`, `bought_button` in `_macros.html` |
 | Recovering or reloading data (agents follow it) | `docs/recovery.md`, `backup.restore`, `make pi-backups`, `make pi-restore` |
 | Login | `security.py` |
 | Charts | `web/charts.py` (SVG), `static/tracker.js`, `.viz` tokens in `style.css` |

@@ -58,7 +58,7 @@ from ..services import ask, extract
 from ..services.claude import Claude, Unavailable
 from ..services.insights import all_item_insights, item_insight, overview, price_drops, retailer_breakdown
 from ..services.planner import due_at, is_due
-from ..services.report import friendly_time, local_time, money
+from ..services.report import friendly_time, local_date, local_time, money
 from ..services.runner import RunInProgress, execute_run, is_run_active
 from ..services.scheduler import RunScheduler
 from ..services.search import ClaudeSearchClient, SearchClient
@@ -171,6 +171,7 @@ def create_app(
     templates = Jinja2Templates(directory=BASE_DIR / "templates")
     templates.env.filters["money"] = money
     templates.env.filters["localtime"] = local_time
+    templates.env.filters["localdate"] = local_date
     templates.env.filters["friendly"] = friendly_time
     templates.env.filters["pct"] = lambda v: "-" if v is None else f"{v:+.0f}%"
     templates.env.globals.update(
@@ -281,7 +282,7 @@ def create_app(
             settings = get_settings(session)
             now = utcnow()
             items = list(session.scalars(select(Item)))
-            active = [i for i in items if i.active]
+            active = [i for i in items if i.watched]
             best = latest_best_offers(session, [i.id for i in active])
             enabled_retailers = (
                 session.scalar(select(func.count()).select_from(Retailer).where(Retailer.status == "enabled")) or 0
@@ -331,7 +332,14 @@ def create_app(
         with session_factory() as session:
             settings = get_settings(session)
             now = utcnow()
-            all_items = list(session.scalars(select(Item).order_by(Item.active.desc(), Item.category, Item.name)))
+            all_items = list(
+                session.scalars(
+                    select(Item).where(Item.status != "bought").order_by(Item.active.desc(), Item.category, Item.name)
+                )
+            )
+            purchased = list(
+                session.scalars(select(Item).where(Item.status == "bought").order_by(Item.bought_at.desc()))
+            )
             best = latest_best_offers(session, [i.id for i in all_items])
         due_ids = {i.id for i in all_items if is_due(i, now, settings)}
         needle = normalize(q)
@@ -347,13 +355,13 @@ def create_app(
         ]
         tags = {item.id: _item_tags(item, best.get(item.id), item.id in due_ids, now) for item in searched}
         counts = Counter(tag for item_tags in tags.values() for tag in item_tags)
+
+        def items_url(**filters: str) -> str:
+            query = urlencode({k: v for k, v in filters.items() if v})
+            return "/items?" + query if query else "/items"
+
         status_links = [
-            (
-                key,
-                label,
-                "/items?" + urlencode({k: v for k, v in (("q", q), ("category", category), ("status", key)) if v}),
-                counts[key],
-            )
+            (key, label, items_url(q=q, category=category, status=key), counts[key])
             for key, label in ITEM_STATUSES
             if not key or counts[key] or key == status
         ]
@@ -370,6 +378,8 @@ def create_app(
             due_ats={item.id: due_at(item, settings) for item in all_items},
             filters={"q": q, "category": category, "status": status},
             status_links=status_links,
+            purchased=purchased,
+            here=items_url(q=q, category=category, status=status),
         )
 
     # ---- adding items: the form, or the smart entry and its review card -------------------
@@ -533,7 +543,7 @@ def create_app(
         return redirect(f"/items/{item_id}", msg="Saved.")
 
     @app.post("/items/{item_id}/action")
-    def item_action(item_id: int, action: Annotated[str, Form()]):
+    def item_action(item_id: int, action: Annotated[str, Form()], next: Annotated[str, Form()] = ""):
         with session_factory() as session:
             item = session.get(Item, item_id)
             if item is None:
@@ -552,7 +562,7 @@ def create_app(
                 msg = item_store.apply_action(session, item, action, get_settings(session))
             except ValueError as exc:
                 raise HTTPException(400, str(exc)) from None
-        return redirect(f"/items/{item_id}", msg=msg)
+        return redirect(security.safe_next(next, f"/items/{item_id}"), msg=f"{item.display_name}: {msg}")
 
     # ---- Ask ---------------------------------------------------------------------------------
 

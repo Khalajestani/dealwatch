@@ -54,7 +54,7 @@ For the Mac (`make dev`), put `DEALWATCH_CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat...` 
 |---|---|---|---|
 | Price check, one run per batch of about 6 items | Settings (Sonnet by default) | `record_item`, one call per item | Searches and pages of the batch's shops only, at most the batch's budget (Settings, 10 by default) |
 | Smart entry | Sonnet, low effort | none | Only the shop of a link in your words, at most 3 lookups |
-| Ask | Picker on the page, Haiku by default | read an item, latest deals, add, change, bought, pause, resume, check next | none |
+| Ask | Picker on the page, Haiku by default | read an item, latest deals, add, change, bought, already bought, undo, pause, resume, check next | none |
 
 The web limits are enforced by the app before each search or page read (a hook in `services/claude.py`), not left
 to the model: a search is always pinned to the allowed shops, a page from another site is refused, and nothing

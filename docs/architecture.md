@@ -6,7 +6,7 @@
  Browser / Home Screen app ──HTTPS──> Caddy on the Pi ──> FastAPI (web/app.py) ──> items.py (one write path)
                                                              │        └─────────> ask.py, extract.py ─┐
                                                              │ thread                                   │
- scheduler (07:00 check, 03:00 backup) ──> runner ──> planner, search ──> claude.py ──> Claude Code ───┘
+ scheduler (02:30 check, 03:00 backup) ──> runner ──> planner, search ──> claude.py ──> Claude Code ───┘
                                              │        pricing, insights, report         (Agent SDK, plan token)
                                              └──> SQLite data/dealwatch.db
 ```
@@ -18,7 +18,10 @@ process-wide lock. Everything that talks to Claude goes through `services/claude
 
 - **Item**: what to watch. `priority` sets the check interval (need 3 days, stock up 7, wishlist 14, unless
   `check_interval_days` is set). `unit` and an offer's pack size give the per-unit price. `target_price` and
-  `target_unit_price` are "definitely buy" thresholds. `snooze_until` (set by Bought it), `active`, `last_checked_at`.
+  `target_unit_price` are "definitely buy" thresholds. `snooze_until` (set by Bought it), `active` (False is paused),
+  `status` (`active`, or `bought` for good with `bought_at`), `last_checked_at`. `Item.watched` (not paused, not
+  bought) is what the planner, `queries.current_deals` and `is_due` read; `insights.all_item_insights` and the
+  report leave bought items out, so they keep their history on their own page only.
 - **Retailer**: bare `domain`, `status` enabled, disabled or blocked, optional `categories`, `sort_order`.
 - **Run** (a price check): status (`running`, `success`, `partial`, `failed`), counters (batches, items,
   `web_lookups`), `plan_json` (batches, shops, budgets), `log_json` (what was searched and read per batch, errors,

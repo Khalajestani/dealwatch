@@ -188,15 +188,18 @@ def build_report(session: Session, run: Run, plan: RunPlan | None, settings: Set
         )
     lines.append("")
 
-    observations = list(
-        session.scalars(
+    # An item bought while the check ran is left out, like it is from the next check.
+    items = {i.id: i for i in session.scalars(select(Item).where(Item.status != "bought"))}
+    observations = [
+        o
+        for o in session.scalars(
             select(Observation)
             .where(Observation.run_id == run.id)
             .order_by(Observation.score.desc(), Observation.price)
         )
-    )
-    run_items = list(session.scalars(select(RunItem).where(RunItem.run_id == run.id)))
-    items = {i.id: i for i in session.scalars(select(Item))}
+        if o.item_id in items
+    ]
+    run_items = [ri for ri in session.scalars(select(RunItem).where(RunItem.run_id == run.id)) if ri.item_id in items]
 
     deals_by_item: dict[int, list[Observation]] = {}
     others_by_item: dict[int, list[Observation]] = {}

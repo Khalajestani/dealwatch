@@ -8,10 +8,10 @@ from __future__ import annotations
 
 from contextlib import suppress
 from dataclasses import dataclass, fields
+from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -41,7 +41,7 @@ class SettingSpec:
     label: str
     help: str
     group: str
-    kind: str = "str"  # str | int | float | bool | choice | cron
+    kind: str = "str"  # str | int | float | bool | choice | time
     choices: list[tuple[str, str]] | None = None
     min: float | None = None
     max: float | None = None
@@ -63,15 +63,15 @@ class Settings:
     interval_need_days: int = 3
     interval_stock_up_days: int = 7
     interval_wishlist_days: int = 14
-    bought_snooze_days: int = 30
+    bought_snooze_days: int = 60
     # locale
     country: str = "NL"
     city: str = "Amsterdam"
     timezone: str = "Europe/Amsterdam"
     currency: str = "EUR"
-    # schedule
+    # schedule: 02:30, so the 5-hour usage window a check opens on the Claude plan has closed by 07:30
     schedule_enabled: bool = True
-    schedule_cron: str = "0 7 * * *"
+    schedule_time: str = "02:30"
 
     def interval_for(self, priority: str) -> int:
         return {
@@ -181,7 +181,7 @@ SPECS: list[SettingSpec] = [
     SettingSpec(
         "bought_snooze_days",
         "Snooze after buying (days)",
-        "When you mark an item as bought it is skipped for this many days.",
+        "Bought it on a refill (toilet paper, detergent) skips it for this many days. Already bought on a one-off (a charger) moves it to Purchased for good.",
         "Deal logic",
         "int",
         min=0,
@@ -199,11 +199,11 @@ SPECS: list[SettingSpec] = [
         "bool",
     ),
     SettingSpec(
-        "schedule_cron",
-        "When (cron)",
-        "Five-field cron in your time zone. Default 0 7 * * * is every day at 07:00.",
+        "schedule_time",
+        "Start time",
+        "When the daily check starts (HH:MM, your time zone, summer and winter time alike). Default 02:30: the 5-hour usage window the check opens on your Claude plan has closed by 07:30, so the morning starts with a fresh one.",
         "Schedule",
-        "cron",
+        "time",
     ),
 ]
 SPEC_BY_KEY = {spec.key: spec for spec in SPECS}
@@ -239,11 +239,11 @@ def validate_setting(key: str, value: Any) -> Any:
             raise ValueError(f"{spec.label}: must be at least {spec.min:g}")
         if spec.max is not None and value > spec.max:
             raise ValueError(f"{spec.label}: must be at most {spec.max:g}")
-    if spec.kind == "cron":
+    if spec.kind == "time":
         try:
-            CronTrigger.from_crontab(value)
-        except ValueError as exc:
-            raise ValueError(f"{spec.label}: invalid cron expression ({exc})") from exc
+            value = datetime.strptime(value, "%H:%M").strftime("%H:%M")
+        except ValueError:
+            raise ValueError(f"{spec.label}: use HH:MM, e.g. 02:30") from None
     if key == "country" and len(value) != 2:
         raise ValueError("Country code must be two letters, e.g. NL")
     if key == "country":

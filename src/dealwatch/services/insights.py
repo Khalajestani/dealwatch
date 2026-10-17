@@ -158,7 +158,8 @@ def item_insight(session: Session, item: Item, now: datetime, points: list[Price
 
 
 def all_item_insights(session: Session, now: datetime) -> list[ItemInsight]:
-    items = list(session.scalars(select(Item).order_by(Item.category, Item.name)))
+    """Every item on the list; bought items keep their history on their own page but are no longer reported."""
+    items = list(session.scalars(select(Item).where(Item.status != "bought").order_by(Item.category, Item.name)))
     by_item: dict[int, list[PricePoint]] = defaultdict(list)
     for point in session.scalars(select(PricePoint).order_by(PricePoint.observed_at, PricePoint.id)):
         by_item[point.item_id].append(point)

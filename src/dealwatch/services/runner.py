@@ -22,7 +22,7 @@ from ..models import Item, Observation, PricePoint, Report, Retailer, Run, RunIt
 from ..settings import Settings, get_settings
 from .planner import PlannedGroup, RunPlan, build_plan
 from .pricing import Baseline, assess_offer, baseline_for_item, summarize_offers, unit_price
-from .report import build_report, render_html
+from .report import build_report, local_time, render_html
 from .search import GroupSearchResult, SearchClient
 
 log = logging.getLogger(__name__)
@@ -72,7 +72,14 @@ def _execute(session_factory, search_client, *, trigger, force, now) -> int:
         session.add(run)
         session.commit()
         run_id = run.id
-    log.info("run %s started (%s): %d batches, %d items", run_id, trigger, len(plan.groups), plan.items_planned)
+    log.info(
+        "run %s started %s (%s): %d batches, %d items",
+        run_id,
+        local_time(now, settings.timezone),
+        trigger,
+        len(plan.groups),
+        plan.items_planned,
+    )
 
     log_data: dict[str, Any] = {"lookups": {}, "errors": [], "dropped_offers": [], "warnings": list(plan.warnings)}
     try:
@@ -95,6 +102,7 @@ def _execute(session_factory, search_client, *, trigger, force, now) -> int:
             _assess_run(session, run, settings)
             _record_price_points(session, run)
             _finalize(session, run, plan, settings, log_data)
+            _log_end(run, settings)
     except Exception as exc:
         log.exception("run %s failed", run_id)
         with session_factory() as session:
@@ -104,8 +112,19 @@ def _execute(session_factory, search_client, *, trigger, force, now) -> int:
             run.finished_at = utcnow()
             run.log_json = json.dumps(log_data, ensure_ascii=False)
             session.commit()
+            _log_end(run, settings)
         raise
     return run_id
+
+
+def _log_end(run: Run, settings: Settings) -> None:
+    log.info(
+        "run %s finished %s: %s in %.0f s",
+        run.id,
+        local_time(run.finished_at, settings.timezone),
+        run.status,
+        run.duration_seconds,
+    )
 
 
 def _domain_permitted(domain: str, group: PlannedGroup) -> bool:

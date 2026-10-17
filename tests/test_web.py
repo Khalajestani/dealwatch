@@ -134,6 +134,36 @@ def test_add_and_edit_item(client, session_factory):
         assert s.get(Item, item.id) is None
 
 
+def test_already_bought_in_one_click_kept_in_purchased_and_undone(client, session_factory):
+    with session_factory() as s:
+        drill = s.scalar(select(Item).where(Item.name == "Cordless drill"))
+    link = f'href="/items/{drill.id}"'
+    page = client.get("/items").text
+    assert 'value="already_bought"' in page and 'value="bought"' in page, "one-offs and refills each get their button"
+
+    r = client.post(
+        f"/items/{drill.id}/action",
+        data={"action": "already_bought", "next": "/items?category=tools_diy"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 303 and r.headers["location"].startswith("/items?category=tools_diy&msg="), (
+        "back where it was"
+    )
+    with session_factory() as s:
+        assert s.get(Item, drill.id).status == "bought"
+    listed, purchased = client.get("/items").text.split('<details class="more-block">\n  <summary>Purchased', 1)
+    assert link not in listed and link in purchased, "collapsed Purchased section"
+    assert "undo_bought" in purchased and "bought " in purchased
+    assert link not in client.get("/").text
+    assert "Undo" in client.get(f"/items/{drill.id}").text
+
+    r = client.post(f"/items/{drill.id}/action", data={"action": "undo_bought", "next": "https://example.com"})
+    assert r.url.path == f"/items/{drill.id}", "only local return paths"
+    with session_factory() as s:
+        assert s.get(Item, drill.id).status == "active"
+    assert "<summary>Purchased" not in client.get("/items").text
+
+
 class _FormReader(HTMLParser):
     """Collects what a form sends as it stands: text and hidden fields, ticked boxes, chosen options."""
 
@@ -276,7 +306,7 @@ def test_retailer_config(client, session_factory):
 def test_settings_validation(client, session_factory):
     r = client.post(
         "/settings",
-        data={"group_size": "4", "schedule_cron": "not a cron", "search_model": "sonnet"},
+        data={"group_size": "4", "schedule_time": "0 7 * * *", "search_model": "sonnet"},
         follow_redirects=False,
     )
     assert "err=" in r.headers["location"]
@@ -288,13 +318,13 @@ def test_settings_validation(client, session_factory):
     )
     r = client.post(
         "/settings",
-        data={"group_size": "4", "schedule_cron": "0 8 * * 2", "search_model": "opus", "min_discount_pct": "12,5"},
+        data={"group_size": "4", "schedule_time": "4:15", "search_model": "opus", "min_discount_pct": "12,5"},
         follow_redirects=False,
     )
     assert "msg=" in r.headers["location"]
     with session_factory() as s:
         st = get_settings(s)
-        assert st.group_size == 4 and st.schedule_cron == "0 8 * * 2" and st.search_model == "opus"
+        assert st.group_size == 4 and st.schedule_time == "04:15" and st.search_model == "opus"
         assert st.min_discount_pct == 12.5  # a comma is a decimal point
         assert st.schedule_enabled is False  # unchecked checkbox
 
@@ -317,7 +347,7 @@ def test_background_check_report_tracker_and_exports(client, session_factory):
     home = client.get("/").text
     assert "Checked today" in home and "no problems" in home and f'href="/runs/{run.id}"' in home
     assert ('class="deal-card"' in home) == bool(run.deal_count), "the deals this check found, marked new"
-    assert home.count('class="row"') >= 3 and "Watching" in home
+    assert home.count('class="row linked"') >= 3 and "Watching" in home
     with session_factory() as s:
         due_now = s.scalar(select(Item).where(Item.name == "Kitchen towels"))
         due_now.last_checked_at = None

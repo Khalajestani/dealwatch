@@ -27,7 +27,7 @@ Followed ENDUR∆NCE's `docs/19-playbook-for-new-apps.md` and TOOL·E's latest s
 | Built on the Mac, shipped over SSH | `deploy/ship.sh`, `make pi-ship` |
 | Secrets typed by the owner on the Pi only | `deploy/dealwatch/make-env.sh` |
 | Data can be put back after a fix or an incident, by an agent too | `backup.py` (`restore`), `make pi-restore`, [recovery.md](recovery.md), D26 |
-| Daily scheduled jobs: the price check and the backup | `services/scheduler.py`, default `0 7 * * *` (D15), backup at 03:00 |
+| Daily scheduled jobs: the price check and the backup | `services/scheduler.py`, daily at 02:30 (D15, D28), backup at 03:00 |
 | The updates there: deals on the dashboard, a report per check, the tracker | Dashboard, Checks, Tracker pages; a Home Screen app (`manifest.webmanifest`, `sw.js`) |
 | Claude on the owner's plan, no API key, nothing billed | `services/claude.py`, [assistant.md](assistant.md), D17 to D19 |
 | Ask, by text or voice, with a photo | `/ask`, `services/ask.py`, `ask.md`, D22 |
@@ -56,3 +56,23 @@ every secret; dates shown dd/mm/yyyy; no em-dashes in UI text or docs.
 | A place to look up what is being checked | Home, Watching (`planner.due_at`); Items with status chips; Checks |
 | Edit that looks like Add, less clutter, only what the search uses | `item_form` in `_macros.html`, `item_new.html`, `item_edit.html`, D27 |
 | Mobile friendly, subtle style and colour | `style.css`, the tab bar in `base.html`, D27 |
+
+## R4. The check before the morning; an Already bought button (17/10/2026)
+
+> "Move the search to 02:30 Europe/Amsterdam [...] Starting the run at 02:30 means its window closes by 07:30, so I
+> get a fresh window when I start using Claude in the morning." And: "one click marks an item as purchased. It
+> stays in the history, but the app stops searching for it and stops reporting it." Asked about the existing Bought
+> it: refills like toilet paper skip two months after a big buy, things like a charger are archived for good.
+
+| Asked | Where |
+|---|---|
+| 02:30 Europe/Amsterdam, daily, across summer and winter time | `schedule_time` in `settings.py`, `scheduler.check_trigger`, D28 |
+| The start time as one setting | Settings, Schedule, Start time |
+| Nothing else sends Claude requests between 07:30 and the next check | Only the check is scheduled to reach Claude (`scheduler.py`), D28 |
+| Start and end of each check in the log | `runner._execute`, `runner._log_end` |
+| Status active or bought with bought_at, existing items active | `Item.status`, `Item.bought_at`, added by `db.init_db` |
+| One click, no confirmation, wherever items are listed | `bought_button` in `_macros.html` on Home and Items; both on the item page |
+| Bought items out of the checks, deals and reports | `Item.watched`, `queries.current_deals`, `insights.all_item_insights`, `report.build_report` |
+| Never deleted; Purchased folded away with the date and Undo | `items.html`, `undo_bought` in `items.apply_action` |
+| Mark as bought in mail digests | There are none (D23) |
+| Refills skip two months | Bought it, `bought_snooze_days` 60 |

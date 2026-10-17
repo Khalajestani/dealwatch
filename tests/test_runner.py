@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timedelta
 
 from conftest import FakeSearchClient
@@ -36,6 +37,14 @@ def test_full_check_with_fake_client(session_factory):
         obs = list(s.scalars(select(Observation).where(Observation.run_id == third)))
         assert obs and any(o.baseline_price is not None for o in obs)
         assert s.get(Run, third).status == "success"
+
+
+def test_each_check_logs_its_start_and_end_in_local_time(session_factory, caplog):
+    caplog.set_level(logging.INFO, logger="dealwatch.services.runner")
+    run_id = execute_run(session_factory, FakeSearchClient(seed=1), trigger="schedule", now=NOW)
+    messages = [r.getMessage() for r in caplog.records]
+    assert f"run {run_id} started Mon 14/09/2026 09:00 (schedule): 4 batches, 8 items" in messages
+    assert any(m.startswith(f"run {run_id} finished ") and ": success in " in m for m in messages)
 
 
 def test_failed_batch_marks_partial_and_keeps_items_due(session_factory):

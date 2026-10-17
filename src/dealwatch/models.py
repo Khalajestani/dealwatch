@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 
-from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, and_
+from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -50,6 +51,10 @@ CATEGORY_ICON = {
     "other": "tag",
 }
 
+# Bought again and again: on these the one-click button is Bought it (skips the item for a while). Anything else is
+# bought once, so the button is Already bought (moves it to Purchased for good). The item page offers both.
+REFILL_CATEGORIES = {"household", "personal_care", "groceries", "health", "pets_baby"}
+
 PRIORITIES: list[tuple[str, str]] = [
     ("need", "Need - running low, buy soon at the best available price"),
     ("stock_up", "Stock up - buy when there is a real deal"),
@@ -85,7 +90,9 @@ class Item(Base):
     notes: Mapped[str | None] = mapped_column(Text)
     reference_url: Mapped[str | None] = mapped_column(Text)  # product page the item was added from (extra search hint)
     image_path: Mapped[str | None] = mapped_column(String(300))  # photo file name under data/uploads
-    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)  # False: paused
+    status: Mapped[str] = mapped_column(String(20), default="active")  # active | bought (for good, kept as history)
+    bought_at: Mapped[datetime | None] = mapped_column(DateTime)  # when it became bought
     snooze_until: Mapped[datetime | None] = mapped_column(DateTime)  # skip checks until this date
     last_bought_at: Mapped[datetime | None] = mapped_column(DateTime)
     last_checked_at: Mapped[datetime | None] = mapped_column(DateTime)
@@ -98,6 +105,20 @@ class Item(Base):
     @property
     def display_name(self) -> str:
         return f"{self.brand} {self.name}".strip() if self.brand else self.name
+
+    @property
+    def is_refill(self) -> bool:
+        return self.category in REFILL_CATEGORIES
+
+    @hybrid_property
+    def watched(self) -> bool:
+        """Checked and reported: not paused and not bought for good."""
+        return bool(self.active) and self.status != "bought"
+
+    @watched.inplace.expression
+    @classmethod
+    def _watched_expression(cls):
+        return and_(cls.active.is_(True), cls.status != "bought")
 
 
 class Retailer(Base):

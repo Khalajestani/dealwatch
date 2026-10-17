@@ -27,7 +27,7 @@ is limited to 1 GB of memory (Claude Code takes about 300 MB while it runs).
 
 | When | What |
 |---|---|
-| Every day at 07:00 (Settings, Schedule) | Price check of the items that are due. Each item is still checked only as often as its priority says (need every 3 days, stock up weekly, wishlist every 2 weeks), so most days only a few items go out. A check missed while the Pi rebooted runs when it is back, within the hour |
+| Every day at 02:30 Amsterdam time (Settings, Schedule, Start time) | Price check of the items that are due. Each item is still checked only as often as its priority says (need every 3 days, stock up weekly, wishlist every 2 weeks), so most days only a few items go out. A check missed while the app was down runs when it is back, within the hour. The log has "run N started" and "run N finished" in local time; the Checks page has the same |
 | Every night at 03:00 | Backup of the database and photos into `backups/` |
 
 ## First setup

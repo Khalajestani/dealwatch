@@ -13,10 +13,15 @@
 
 <div class="actions">
   <a class="btn small" href="/items/{{ item.id }}/edit">{{ icon('edit', 'sm') }} Edit</a>
-  <form method="post" action="/items/{{ item.id }}/action"><input type="hidden" name="action" value="bought"><button type="submit" class="ok small" title="Skips it for {{ settings.bought_snooze_days }} days">{{ icon('check', 'sm') }} Bought it</button></form>
+  {% if item.status == 'bought' %}
+  <form method="post" action="/items/{{ item.id }}/action"><input type="hidden" name="action" value="undo_bought"><button type="submit" class="small" title="Back on the list, checked again">{{ icon('refresh', 'sm') }} Undo</button></form>
+  {% else %}
+  <form method="post" action="/items/{{ item.id }}/action"><input type="hidden" name="action" value="bought"><button type="submit" class="ok small" title="A refill: skips it for {{ settings.bought_snooze_days }} days">{{ icon('check', 'sm') }} Bought it</button></form>
+  <form method="post" action="/items/{{ item.id }}/action"><input type="hidden" name="action" value="already_bought"><button type="submit" class="ok small" title="A one-off: moves it to Purchased, no more checks or deals">{{ icon('check-circle', 'sm') }} Already bought</button></form>
   {% if item.snooze_until %}<form method="post" action="/items/{{ item.id }}/action"><input type="hidden" name="action" value="unsnooze"><button type="submit" class="small">{{ icon('clock', 'sm') }} Remove snooze</button></form>{% endif %}
   {% if not due %}<form method="post" action="/items/{{ item.id }}/action"><input type="hidden" name="action" value="check_next"><button type="submit" class="small">{{ icon('refresh', 'sm') }} Check next time</button></form>{% endif %}
   <form method="post" action="/items/{{ item.id }}/action"><input type="hidden" name="action" value="{{ 'pause' if item.active else 'resume' }}"><button type="submit" class="small">{{ icon('pause' if item.active else 'play', 'sm') }} {{ 'Pause' if item.active else 'Resume' }}</button></form>
+  {% endif %}
 </div>
 
 <p class="muted small">

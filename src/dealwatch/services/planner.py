@@ -18,7 +18,7 @@ from ..settings import Settings
 from .pricing import Baseline, baseline_for_item
 
 PRIORITY_RANK = {"need": 0, "stock_up": 1, "wishlist": 2}
-DUE_SLACK = timedelta(hours=12)  # so a weekly item checked Mon 07:05 is due again Mon 07:00
+DUE_SLACK = timedelta(hours=12)  # so a weekly item checked Mon 02:35 is due again Mon 02:30
 
 
 @dataclass
@@ -87,7 +87,7 @@ class PlannedGroup:
 class RunPlan:
     groups: list[PlannedGroup] = field(default_factory=list)
     deferred: list[PlannedItem] = field(default_factory=list)  # due, but over the batch cap
-    not_due: list[str] = field(default_factory=list)  # names of active items skipped this run
+    not_due: list[str] = field(default_factory=list)  # names of watched items skipped this run
     enabled_retailers: list[str] = field(default_factory=list)
     blocked_retailers: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
@@ -117,7 +117,7 @@ def due_at(item: Item, settings: Settings) -> datetime | None:
 
 
 def is_due(item: Item, now: datetime, settings: Settings) -> bool:
-    if not item.active:
+    if not item.watched:
         return False
     at = due_at(item, settings)
     return at is None or at <= now
@@ -152,7 +152,7 @@ def _to_planned_item(item: Item, baseline: Baseline) -> PlannedItem:
 
 def build_plan(session: Session, settings: Settings, *, now: datetime, force: bool = False) -> RunPlan:
     plan = RunPlan()
-    items = list(session.scalars(select(Item).where(Item.active.is_(True)).order_by(Item.id)))
+    items = list(session.scalars(select(Item).where(Item.watched).order_by(Item.id)))
     retailers = list(session.scalars(select(Retailer).order_by(Retailer.sort_order, Retailer.name)))
     enabled = [r for r in retailers if r.status == "enabled"]
     blocked = [r for r in retailers if r.status == "blocked"]

@@ -43,11 +43,11 @@ def last_complete_run(session: Session) -> Run | None:
 
 
 def current_deals(session: Session, today: date) -> list[tuple[Observation, Item]]:
-    """The best deal of each active item from its most recent check, unless the offer has ended; best first.
+    """The best deal of each watched item from its most recent check, unless the offer has ended; best first.
 
     A daily check only looks at the items that are due, so the last check alone would hide the deals the checks
     before it found for the other items."""
-    item_ids = list(session.scalars(select(Item.id).where(Item.active.is_(True))))
+    item_ids = list(session.scalars(select(Item.id).where(Item.watched)))
     if not item_ids:
         return []
     latest = _latest_check_per_item(item_ids)

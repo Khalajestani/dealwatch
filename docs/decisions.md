@@ -90,12 +90,12 @@ Each run only takes the items that are due by their priority's interval, so a da
 every day: it means an item never waits more than a day past its interval. The nightly backup at 03:00 is the second
 job; both live in the one scheduler inside the web process.
 
-To change: Settings, Schedule (cron), and the check intervals per priority.
+To change: Settings, Schedule (start time), and the check intervals per priority. D28 moved the check to 02:30.
 
 ## D16. Checks run one batch after another (14/10/2026)
 
 Each batch is a Claude Code process of about 300 MB. Running them in parallel on the Pi would double the memory for
-a check that runs at 07:00 nobody waits for. The parallel-batches setting is gone.
+a check nobody waits for. The parallel-batches setting is gone.
 
 ## D17. Claude runs on the owner's plan through Claude Code; no API key (14/10/2026)
 
@@ -210,3 +210,20 @@ Add, Ask, More) replaces the two rows of pills, and the CSV links moved from the
 
 To change: the parts are in `style.css` and `_macros.html`; the home page's choices are in `dashboard.html` and the
 `dashboard` route.
+
+## D28. The check at 02:30; bought for good next to bought for now (17/10/2026)
+
+- **02:30 Europe/Amsterdam** (R4). The check runs on the owner's Claude plan, whose usage limit is a rolling 5-hour
+  window from the first message: a check at 02:30 has its window closed by 07:30, so the morning starts fresh. The
+  schedule is one setting, `schedule_time` (HH:MM), daily, on the local clock of the time zone from Settings, so it
+  stays 02:30 in summer and winter time. It replaces the cron field: the check is daily by design (D15). On the
+  night the clocks go forward 02:30 does not exist and the check runs at 03:30. A check missed while the app was down
+  still runs within the hour. No other scheduled step reaches Claude (the backup never does; Ask, the smart entry and
+  Check now run only when used), and each check logs its start and end in local time.
+- **Two kinds of bought.** Refills (toilet paper, detergent, kitchen towels) are bought again: Bought it skips them
+  for 60 days (was 30). One-offs (a charger) are done: Already bought sets `status` to `bought` with `bought_at`, and
+  the item is no longer checked or reported, but never deleted: it waits in Purchased with Undo. The one-click button
+  in the lists follows the category (`models.REFILL_CATEGORIES`); the item page and Ask offer both.
+- **No mail digest to put the action in**: there are none (D23). The lists on Home and Items carry it instead.
+
+To change: Settings for the start time and the snooze days, `REFILL_CATEGORIES` for which button a list shows.

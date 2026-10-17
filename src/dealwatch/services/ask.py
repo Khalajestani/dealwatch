@@ -37,6 +37,8 @@ EFFORT = {"haiku": "low", "sonnet": "medium", "opus": "medium"}
 
 
 def _status(item: Item, now: datetime, settings: Settings) -> str:
+    if item.status == "bought":
+        return f"bought for good on {local_date(item.bought_at, settings.timezone)}, in Purchased"
     if not item.active:
         return "paused"
     if item.snooze_until and item.snooze_until > now:
@@ -263,12 +265,13 @@ def make_tools(session: Session, settings: Settings) -> list[Tool]:
 
     @tool
     def item_action(item_id: int, action: Action) -> str:
-        """A quick action on an item: bought (snoozes it), pause, resume, unsnooze, or check_next (check it in the next
+        """A quick action on an item: bought (a refill, snoozes it), already_bought (a one-off, moves it to Purchased
+        for good), undo_bought (back from Purchased), pause, resume, unsnooze, or check_next (check it in the next
         price check).
 
         Args:
             item_id: The item's id from the list.
-            action: bought, pause, resume, unsnooze or check_next.
+            action: bought, already_bought, undo_bought, pause, resume, unsnooze or check_next.
         """
         item = get(item_id)
         return f"{item.display_name}: {item_store.apply_action(session, item, action, settings)}"
